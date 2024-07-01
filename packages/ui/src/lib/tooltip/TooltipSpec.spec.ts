@@ -27,17 +27,31 @@ import TooltipSpec from './TooltipSpec.svelte';
 
 const tip = 'test';
 
-test('Expect basic styling', async () => {
-  render(TooltipSpec, { tip });
+test('Expect basic slot styling', async () => {
+  render(TooltipSpec, { tipSlot: tip });
 
   const element = screen.getByLabelText('tooltip');
   expect(element).toBeInTheDocument();
-  expect(element).toHaveClass('text-white');
+  expect(element).toHaveClass('bg-[var(--pd-tooltip-bg)]');
+  expect(element).toHaveClass('text-[var(--pd-tooltip-text)]');
+  expect(element).toHaveClass('border-[var(--pd-tooltip-border)]');
+  expect(element).toHaveClass('border-[1px]');
+});
+
+test('Expect basic prop styling', async () => {
+  render(TooltipSpec, { tipProp: tip });
+
+  const element = screen.getByLabelText('tooltip');
+  expect(element).toBeInTheDocument();
+  expect(element).toHaveClass('bg-[var(--pd-tooltip-bg)]');
+  expect(element).toHaveClass('text-[var(--pd-tooltip-text)]');
+  expect(element).toHaveClass('border-[var(--pd-tooltip-border)]');
+  expect(element).toHaveClass('border-[1px]');
 });
 
 function createTest(props: Record<string, boolean>, locationName: string, expectedStyle = locationName): void {
   test(`Expect property ${locationName} to add ${expectedStyle} class to parent element`, () => {
-    render(TooltipSpec, { tip, ...props });
+    render(TooltipSpec, { tipSlot: tip, ...props });
     const element = screen.getByLabelText('tooltip');
     expect(element).toBeInTheDocument();
     expect(element.parentElement).toHaveClass(expectedStyle);

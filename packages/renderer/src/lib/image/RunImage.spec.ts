@@ -88,6 +88,7 @@ async function createRunImage(entrypoint?: string | string[], cmd?: string[]) {
     tag: '',
     icon: ImageIcon,
     badges: [],
+    digest: 'sha256:1234567890',
   });
   const imageInfo: ImageInspectInfo = {
     Architecture: '',
@@ -98,7 +99,7 @@ async function createRunImage(entrypoint?: string | string[], cmd?: string[]) {
       AttachStderr: false,
       AttachStdin: false,
       AttachStdout: false,
-      Cmd: cmd || [],
+      Cmd: cmd ?? [],
       Domainname: '',
       Entrypoint: entrypoint,
       Env: [],

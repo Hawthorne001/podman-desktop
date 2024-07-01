@@ -24,8 +24,8 @@ $: Promise.all(
             containerConnectionInfo as unknown as ContainerProviderConnection,
           )
         : undefined,
-      connection: containerConnectionInfo?.name || '',
-      providerId: providerInternalId || '',
+      connection: containerConnectionInfo?.name ?? '',
+      providerId: providerInternalId ?? '',
     };
   }),
 ).then(value => (tmpProviderContainerConfiguration = value.flat()));
@@ -35,7 +35,7 @@ $: providerContainerConfiguration = tmpProviderContainerConfiguration.filter(
 );
 </script>
 
-<div class="h-full bg-zinc-900">
+<div class="h-full text-[var(--pd-table-body-text)]">
   {#if containerConnectionInfo}
     {@const peerProperties = new PeerProperties()}
     <div class="flex pl-8 py-4 flex-col w-full text-sm">

@@ -31,9 +31,7 @@ import SettingsPage from './SettingsPage.svelte';
       {@const sessionRequests = provider.sessionRequests ?? []}
       <!-- Registered Authentication Provider row start -->
       <div class="flex flex-col w-full mb-5" role="listitem" aria-label="{provider.displayName}">
-        <div
-          class="flex rounded-md border-0 justify-between"
-          style="background-color: rgb(39 39 42 / var(--tw-bg-opacity))">
+        <div class="flex rounded-md border-0 justify-between bg-[var(--pd-invert-content-card-bg)]">
           <!-- Icon + status -->
           <div class="ml-4 flex items-center" aria-label="Provider Information">
             <!-- Icon -->
@@ -64,17 +62,23 @@ import SettingsPage from './SettingsPage.svelte';
             <!-- Authentication Provider name and status item start -->
             <div class="px-5 py-2 text-sm m-auto">
               <div class="flex flex-col">
-                <div class="flex items-center text-lg w-full h-full" aria-label="Provider Name">
+                <div
+                  class="flex items-center text-lg text-[var(--pd-invert-content-card-header-text)] w-full h-full"
+                  aria-label="Provider Name">
                   {provider.displayName}
                 </div>
                 <div class="flex flex-row items-center w-full h-full">
                   <dif>
                     <Fa
-                      class="h-3 w-3 text-md mr-2 text-{provider.accounts.length > 0 ? 'green' : 'gray'}-500"
+                      class="h-3 w-3 text-md mr-2 text-[var(--pd-status-{provider.accounts.length > 0
+                        ? 'connected'
+                        : 'disconnected'})]"
                       icon="{faCircle}" />
                   </dif>
                   <div
-                    class="uppercase text-xs text-{provider.accounts.length > 0 ? 'green' : 'gray'}-500"
+                    class="uppercase text-xs text-[var(--pd-status-{provider.accounts.length > 0
+                      ? 'connected'
+                      : 'disconnected'})]"
                     aria-label="Provider Status">
                     <span>
                       {provider.accounts.length > 0 ? 'Logged in' : 'Logged out'}
@@ -96,22 +100,13 @@ import SettingsPage from './SettingsPage.svelte';
                           aria-label="Logged In Username">
                           {account.label}
                         </span>
-                        <Tooltip bottomRight>
-                          <svelte:fragment slot="content">
-                            <button
-                              aria-label="Sign out of {account.label}"
-                              class="pl-2 hover:cursor-pointer hover:text-white text-white"
-                              on:click="{() => window.requestAuthenticationProviderSignOut(provider.id, account.id)}">
-                              <Fa class="h-3 w-3 text-md mr-2" icon="{faRightFromBracket}" />
-                            </button>
-                          </svelte:fragment>
-                          <svelte:fragment slot="tip">
-                            <div
-                              class="inline-block py-2 px-4 rounded-md bg-charcoal-800 text-xs text-white"
-                              aria-label="tooltip">
-                              Sign out of {account.label}
-                            </div>
-                          </svelte:fragment>
+                        <Tooltip bottomRight tip="Sign out of {account.label}">
+                          <button
+                            aria-label="Sign out of {account.label}"
+                            class="pl-2 hover:cursor-pointer hover:text-white text-white"
+                            on:click="{() => window.requestAuthenticationProviderSignOut(provider.id, account.id)}">
+                            <Fa class="h-3 w-3 text-md mr-2" icon="{faRightFromBracket}" />
+                          </button>
                         </Tooltip>
                       </div>
                     </div>
@@ -125,24 +120,15 @@ import SettingsPage from './SettingsPage.svelte';
             {#if sessionRequests.length === 1}
               {@const request = sessionRequests[0]}
               <!-- Authentication Provider Auth Request Sign In button start -->
-              <Tooltip bottomLeft>
-                <svelte:fragment slot="content">
-                  <Button
-                    aria-label="Sign in"
-                    class="pl-2 mr-4 hover:cursor-pointer hover:text-white text-white"
-                    on:click="{() => window.requestAuthenticationProviderSignIn(request.id)}">
-                    <div class="flex flex-row items-center">
-                      <Fa class="h-3 w-3 text-md mr-2" icon="{faRightToBracket}" />Sign in
-                    </div>
-                  </Button>
-                </svelte:fragment>
-                <svelte:fragment slot="tip">
-                  <div
-                    class="inline-block py-2 px-4 rounded-md bg-charcoal-800 text-xs text-white"
-                    aria-label="tooltip">
-                    Sign in to use {request.extensionLabel}
+              <Tooltip bottomLeft tip="Sign in to use {request.extensionLabel}">
+                <Button
+                  aria-label="Sign in"
+                  class="pl-2 mr-4 hover:cursor-pointer hover:text-white text-white"
+                  on:click="{() => window.requestAuthenticationProviderSignIn(request.id)}">
+                  <div class="flex flex-row items-center">
+                    <Fa class="h-3 w-3 text-md mr-2" icon="{faRightToBracket}" />Sign in
                   </div>
-                </svelte:fragment>
+                </Button>
               </Tooltip>
               <!-- Authentication Provider Auth Request Sign In button end -->
             {:else if sessionRequests.length > 1}

@@ -16,6 +16,8 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import type { ComponentType, SvelteComponent } from 'svelte';
+
 /**
  * Options to be used when creating a Column.
  */
@@ -47,8 +49,7 @@ export interface ColumnInformation<Type, RenderType = Type> {
    * The component must have a property 'object' that has the
    * same type as the Column.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly renderer?: any;
+  readonly renderer?: ComponentType<SvelteComponent<{ object: RenderType }>>;
 
   /**
    * Set a comparator used to sort the data by the values in this column.
@@ -96,7 +97,7 @@ export class Column<Type, RenderType = Type> {
 /**
  * Options to be used when creating a Row.
  */
-export interface RowInformation<Type> {
+export interface RowInformation<Type, ChildType> {
   /**
    * Returns true if a row can be selected, and false otherwise.
    */
@@ -110,12 +111,12 @@ export interface RowInformation<Type> {
   /**
    * Returns an array of child objects of a given row.
    */
-  readonly children?: (object: Type) => Type[];
+  readonly children?: (object: Type) => ChildType[];
 }
 
 /**
  * A table row.
  */
-export class Row<Type> {
-  constructor(readonly info: RowInformation<Type>) {}
+export class Row<Type, ChildType = Type> {
+  constructor(readonly info: RowInformation<Type, ChildType>) {}
 }

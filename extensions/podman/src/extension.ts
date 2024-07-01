@@ -850,7 +850,7 @@ async function doHandleWSLDistroNotFoundError(
 
 export async function registerUpdatesIfAny(
   provider: extensionApi.Provider,
-  installedPodman: InstalledPodman,
+  installedPodman: InstalledPodman | undefined,
   podmanInstall: PodmanInstall,
 ): Promise<extensionApi.Disposable | undefined> {
   const updateInfo = await podmanInstall.checkForUpdate(installedPodman);
@@ -897,11 +897,9 @@ export async function initCheckAndRegisterUpdate(
     }
     currentUpdatesDisposables.length = 0;
     const podmanInstalledValue = await getPodmanInstallation();
-    if (podmanInstalledValue) {
-      const disposable = await registerUpdatesIfAny(provider, podmanInstalledValue, podmanInstall);
-      if (disposable) {
-        currentUpdatesDisposables.push(disposable);
-      }
+    const disposable = await registerUpdatesIfAny(provider, podmanInstalledValue, podmanInstall);
+    if (disposable) {
+      currentUpdatesDisposables.push(disposable);
     }
   };
   await checkForUpdate();
@@ -1412,7 +1410,7 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
       extensionApi.context.setValue('podmanIsNotInstalled', !installed, 'onboarding');
       telemetryLogger?.logUsage('podman.onboarding.checkInstalledCommand', {
         status: installed,
-        version: installation?.version || '',
+        version: installation?.version ?? '',
       });
     },
   );
@@ -1424,7 +1422,7 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
   const onboardingCheckReqsCommand = extensionApi.commands.registerCommand(
     'podman.onboarding.checkRequirementsCommand',
     async () => {
-      const checks = podmanInstall.getInstallChecks() || [];
+      const checks = podmanInstall.getInstallChecks() ?? [];
       const result = [];
       let successful = true;
       for (const check of checks) {
@@ -1494,7 +1492,7 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
         extensionApi.context.setValue('podmanIsNotInstalled', true, 'onboarding');
         telemetryOptions.error = e;
       } finally {
-        telemetryOptions.version = installation?.version || '';
+        telemetryOptions.version = installation?.version ?? '';
         telemetryOptions.installed = installed;
         telemetryLogger?.logUsage('podman.onboarding.installPodman', telemetryOptions);
       }

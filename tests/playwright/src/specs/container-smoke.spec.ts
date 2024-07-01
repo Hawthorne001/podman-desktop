@@ -29,7 +29,7 @@ import { NavigationBar } from '../model/workbench/navigation';
 import { PodmanDesktopRunner } from '../runner/podman-desktop-runner';
 import type { RunnerTestContext } from '../testContext/runner-test-context';
 import { deleteContainer, deleteImage } from '../utility/operations';
-import { waitUntil, waitWhile } from '../utility/wait';
+import { waitForPodmanMachineStartup, waitUntil, waitWhile } from '../utility/wait';
 
 let pdRunner: PodmanDesktopRunner;
 let page: Page;
@@ -45,6 +45,7 @@ beforeAll(async () => {
   pdRunner.setVideoAndTraceName('containers-e2e');
   const welcomePage = new WelcomePage(page);
   await welcomePage.handleWelcomePage(true);
+  await waitForPodmanMachineStartup(page);
   // wait giving a time to podman desktop to load up
   let images: ImagesPage;
   try {
@@ -112,7 +113,7 @@ describe('Verification of container creation workflow', async () => {
     const containerDetails = await containers.openContainersDetails(containerToRun);
     await playExpect
       .poll(async () => await containerDetails.getState(), { timeout: 10000 })
-      .toContain(ContainerState.Running);
+      .toContain(ContainerState.Running.toLowerCase());
 
     images = await navigationBar.openImages();
     playExpect(await images.getCurrentStatusOfImage(imageToPull)).toBe('USED');
@@ -127,7 +128,7 @@ describe('Verification of container creation workflow', async () => {
     // test state of container in summary tab
     await pdRunner.screenshot('containers-container-details.png');
     const containerState = await containersDetails.getState();
-    playExpect(containerState).toContain(ContainerState.Running);
+    playExpect(containerState).toContain(ContainerState.Running.toLowerCase());
     // check Logs output
     await containersDetails.activateTab('Logs');
     const helloWorldMessage = containersDetails.getPage().getByText('No Log');
@@ -146,11 +147,11 @@ describe('Verification of container creation workflow', async () => {
     await playExpect(containersDetails.heading).toBeVisible();
     await playExpect(containersDetails.heading).toContainText(containerToRun);
     // test state of container in summary tab
-    playExpect(await containersDetails.getState()).toContain(ContainerState.Running);
+    playExpect(await containersDetails.getState()).toContain(ContainerState.Running.toLowerCase());
     await containersDetails.stopContainer();
     try {
-      await waitUntil(async () => (await containersDetails.getState()) === ContainerState.Exited, 15000);
-      await playExpect(await containersDetails.getStateLocator()).toHaveText(ContainerState.Exited);
+      await waitUntil(async () => (await containersDetails.getState()) === ContainerState.Exited.toLowerCase(), 15000);
+      await playExpect(await containersDetails.getStateLocator()).toHaveText(ContainerState.Exited.toLowerCase());
     } catch (error) {
       await pdRunner.screenshot('containers--container-stop-failed.png');
       throw error;
@@ -186,7 +187,9 @@ describe('Verification of container creation workflow', async () => {
     for (const container of containerList) {
       let containersPage = new ContainersPage(page);
       const containersDetails = await containersPage.stopContainer(container);
-      await playExpect(await containersDetails.getStateLocator()).toHaveText(ContainerState.Exited, { timeout: 20000 });
+      await playExpect(await containersDetails.getStateLocator()).toHaveText(ContainerState.Exited.toLowerCase(), {
+        timeout: 20000,
+      });
       containersPage = await navigationBar.openContainers();
       await playExpect(containersPage.heading).toBeVisible();
       await containersPage.pruneContainers();

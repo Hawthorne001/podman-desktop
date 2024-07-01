@@ -33,8 +33,8 @@ export let name: string | undefined = undefined;
 
 let detailsPage: DetailsPage;
 
-const connectionName = Buffer.from(name || '', 'base64').toString();
-const socketPath: string = Buffer.from(connection || '', 'base64').toString();
+const connectionName = Buffer.from(name ?? '', 'base64').toString();
+const socketPath: string = Buffer.from(connection ?? '', 'base64').toString();
 let connectionStatus: IConnectionStatus;
 let noLog = true;
 let connectionInfo: ProviderContainerConnectionInfo | undefined;
@@ -43,7 +43,7 @@ let loggerHandlerKey: symbol | undefined;
 let configurationKeys: IConfigurationPropertyRecordedSchema[];
 $: configurationKeys = properties
   .filter(property => property.scope === 'ContainerConnection')
-  .sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+  .sort((a, b) => (a.id ?? '').localeCompare(b.id ?? ''));
 
 let providersUnsubscribe: Unsubscriber;
 onMount(async () => {
@@ -136,53 +136,51 @@ function setNoLogs() {
 </script>
 
 {#if connectionInfo}
-  <div class="bg-charcoal-700 h-full">
-    <DetailsPage title="{connectionInfo.name}" bind:this="{detailsPage}">
-      <svelte:fragment slot="subtitle">
-        <div class="flex flex-row">
-          <ConnectionStatus status="{connectionInfo.status}" />
-          <ConnectionErrorInfoButton status="{connectionStatus}" />
+  <DetailsPage title="{connectionInfo.name}" bind:this="{detailsPage}">
+    <svelte:fragment slot="subtitle">
+      <div class="flex flex-row">
+        <ConnectionStatus status="{connectionInfo.status}" />
+        <ConnectionErrorInfoButton status="{connectionStatus}" />
+      </div>
+    </svelte:fragment>
+    <svelte:fragment slot="actions">
+      {#if providerInfo}
+        <div class="flex justify-end">
+          <PreferencesConnectionActions
+            provider="{providerInfo}"
+            connection="{connectionInfo}"
+            connectionStatus="{connectionStatus}"
+            updateConnectionStatus="{updateConnectionStatus}"
+            addConnectionToRestartingQueue="{addConnectionToRestartingQueue}" />
         </div>
-      </svelte:fragment>
-      <svelte:fragment slot="actions">
-        {#if providerInfo}
-          <div class="flex justify-end">
-            <PreferencesConnectionActions
-              provider="{providerInfo}"
-              connection="{connectionInfo}"
-              connectionStatus="{connectionStatus}"
-              updateConnectionStatus="{updateConnectionStatus}"
-              addConnectionToRestartingQueue="{addConnectionToRestartingQueue}" />
-          </div>
-        {/if}
-      </svelte:fragment>
-      <IconImage slot="icon" image="{providerInfo?.images?.icon}" alt="{providerInfo?.name}" class="max-h-10" />
-      <svelte:fragment slot="tabs">
-        <Tab
-          title="Summary"
-          selected="{isTabSelected($router.path, 'summary')}"
-          url="{getTabUrl($router.path, 'summary')}" />
-        {#if connectionInfo.lifecycleMethods && connectionInfo.lifecycleMethods.length > 0}
-          <Tab title="Logs" selected="{isTabSelected($router.path, 'logs')}" url="{getTabUrl($router.path, 'logs')}" />
-        {/if}
-      </svelte:fragment>
-      <svelte:fragment slot="content">
-        <div class="h-full">
-          <Route path="/summary" breadcrumb="Summary" navigationHint="tab">
-            <PreferencesContainerConnectionDetailsSummary
-              containerConnectionInfo="{connectionInfo}"
-              providerInternalId="{providerInternalId}"
-              properties="{configurationKeys}" />
-          </Route>
-          <Route path="/logs" breadcrumb="Logs" navigationHint="tab">
-            <PreferencesConnectionDetailsLogs
-              providerInternalId="{providerInternalId}"
-              connectionInfo="{connectionInfo}"
-              setNoLogs="{setNoLogs}"
-              noLog="{noLog}" />
-          </Route>
-        </div>
-      </svelte:fragment>
-    </DetailsPage>
-  </div>
+      {/if}
+    </svelte:fragment>
+    <IconImage slot="icon" image="{providerInfo?.images?.icon}" alt="{providerInfo?.name}" class="max-h-10" />
+    <svelte:fragment slot="tabs">
+      <Tab
+        title="Summary"
+        selected="{isTabSelected($router.path, 'summary')}"
+        url="{getTabUrl($router.path, 'summary')}" />
+      {#if connectionInfo.lifecycleMethods && connectionInfo.lifecycleMethods.length > 0}
+        <Tab title="Logs" selected="{isTabSelected($router.path, 'logs')}" url="{getTabUrl($router.path, 'logs')}" />
+      {/if}
+    </svelte:fragment>
+    <svelte:fragment slot="content">
+      <div class="h-full">
+        <Route path="/summary" breadcrumb="Summary" navigationHint="tab">
+          <PreferencesContainerConnectionDetailsSummary
+            containerConnectionInfo="{connectionInfo}"
+            providerInternalId="{providerInternalId}"
+            properties="{configurationKeys}" />
+        </Route>
+        <Route path="/logs" breadcrumb="Logs" navigationHint="tab">
+          <PreferencesConnectionDetailsLogs
+            providerInternalId="{providerInternalId}"
+            connectionInfo="{connectionInfo}"
+            setNoLogs="{setNoLogs}"
+            noLog="{noLog}" />
+        </Route>
+      </div>
+    </svelte:fragment>
+  </DetailsPage>
 {/if}
