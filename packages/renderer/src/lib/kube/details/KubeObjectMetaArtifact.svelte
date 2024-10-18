@@ -3,8 +3,9 @@ import { faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons
 import type { V1ObjectMeta } from '@kubernetes/client-node';
 import Fa from 'svelte-fa';
 
-import Cell from './ui/Cell.svelte';
-import Title from './ui/Title.svelte';
+import Cell from '/@/lib/details/DetailsCell.svelte';
+import Title from '/@/lib/details/DetailsTitle.svelte';
+
 import { internalKubernetesKeys } from './utils';
 
 export let artifact: V1ObjectMeta | undefined;
@@ -52,10 +53,12 @@ if (artifact?.annotations) {
     <Cell>Name</Cell>
     <Cell>{artifact?.name}</Cell>
   </tr>
-  <tr>
-    <Cell>Namespace</Cell>
-    <Cell>{artifact?.namespace}</Cell>
-  </tr>
+  {#if artifact?.namespace}
+    <tr>
+      <Cell>Namespace</Cell>
+      <Cell>{artifact?.namespace}</Cell>
+    </tr>
+  {/if}
   <tr>
     <Cell>Created</Cell>
     <Cell>{artifact?.creationTimestamp}</Cell>
@@ -75,9 +78,9 @@ if (artifact?.annotations) {
     <tr>
       <Cell
         style="cursor-pointer flex items-center"
-        onClick="{() => (internalLabelsDropdownOpen = !internalLabelsDropdownOpen)}">
+        onClick={() => (internalLabelsDropdownOpen = !internalLabelsDropdownOpen)}>
         Internal Labels
-        <Fa class="ml-1" size="0.9x" icon="{internalLabelsDropdownOpen ? faChevronDown : faChevronRight}" />
+        <Fa class="ml-1" size="0.9x" icon={internalLabelsDropdownOpen ? faChevronDown : faChevronRight} />
       </Cell>
       <Cell>
         {#if internalLabelsDropdownOpen}
@@ -107,9 +110,9 @@ if (artifact?.annotations) {
     <tr>
       <Cell
         style="cursor-pointer flex items-center"
-        onClick="{() => (internalAnnotationsDropdownOpen = !internalAnnotationsDropdownOpen)}">
+        onClick={() => (internalAnnotationsDropdownOpen = !internalAnnotationsDropdownOpen)}>
         Internal Annotations
-        <Fa class="ml-1" size="0.9x" icon="{internalAnnotationsDropdownOpen ? faChevronDown : faChevronRight}" />
+        <Fa class="ml-1" size="0.9x" icon={internalAnnotationsDropdownOpen ? faChevronDown : faChevronRight} />
       </Cell>
       <Cell>
         {#if internalAnnotationsDropdownOpen}

@@ -49,7 +49,10 @@
 }
 </style>
 
-<script>
+<script lang="ts">
+import { tooltipHidden } from './tooltip-store';
+
+export let tip: string | undefined = undefined;
 export let top = false;
 export let topLeft = false;
 export let topRight = false;
@@ -62,18 +65,31 @@ export let left = false;
 
 <div class="relative inline-block">
   <span class="group tooltip-slot {$$props.class}">
-    <slot name="content" />
+    <slot />
   </span>
   <div
-    class="whitespace-nowrap absolute tooltip opacity-0 inline-block transition-opacity duration-150 ease-in-out pointer-events-none z-[10]"
-    class:left="{left}"
-    class:right="{right}"
-    class:bottom="{bottom}"
-    class:top="{top}"
-    class:top-left="{topLeft}"
-    class:top-right="{topRight}"
-    class:bottom-left="{bottomLeft}"
-    class:bottom-right="{bottomRight}">
-    <slot name="tip" />
+    class="whitespace-nowrap absolute tooltip opacity-0 inline-block transition-opacity duration-150 ease-in-out pointer-events-none text-sm z-[10]"
+    class:left={left}
+    class:right={right}
+    class:bottom={bottom}
+    class:top={top}
+    class:top-left={topLeft}
+    class:top-right={topRight}
+    class:bottom-left={bottomLeft}
+    class:bottom-right={bottomRight}>
+    {#if tip && !$tooltipHidden}
+      <div
+        class="inline-block py-2 px-4 rounded-md bg-[var(--pd-tooltip-bg)] text-[var(--pd-tooltip-text)] border-[1px] border-[var(--pd-tooltip-border)] {$$props.class}"
+        aria-label="tooltip">
+        {tip}
+      </div>
+    {/if}
+    {#if $$slots.tip && !tip && !$tooltipHidden}
+      <div
+        class="inline-block rounded-md bg-[var(--pd-tooltip-bg)] text-[var(--pd-tooltip-text)] border-[1px] border-[var(--pd-tooltip-border)]"
+        aria-label="tooltip">
+        <slot name="tip" />
+      </div>
+    {/if}
   </div>
 </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { Tab } from '@podman-desktop/ui-svelte';
+import { StatusIcon, Tab } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 import { stringify } from 'yaml';
@@ -10,7 +10,6 @@ import type { V1Route } from '/@api/openshift-types';
 import Route from '../../Route.svelte';
 import MonacoEditor from '../editor/MonacoEditor.svelte';
 import IngressRouteIcon from '../images/IngressRouteIcon.svelte';
-import StatusIcon from '../images/StatusIcon.svelte';
 import KubeEditYAML from '../kube/KubeEditYAML.svelte';
 import DetailsPage from '../ui/DetailsPage.svelte';
 import StateChange from '../ui/StateChange.svelte';
@@ -58,34 +57,28 @@ async function loadRouteDetails() {
 </script>
 
 {#if routeUI}
-  <DetailsPage title="{routeUI.name}" subtitle="{routeUI.namespace}" bind:this="{detailsPage}">
-    <StatusIcon slot="icon" icon="{IngressRouteIcon}" size="{24}" status="{routeUI.status}" />
+  <DetailsPage title={routeUI.name} subtitle={routeUI.namespace} bind:this={detailsPage}>
+    <StatusIcon slot="icon" icon={IngressRouteIcon} size={24} status={routeUI.status} />
     <svelte:fragment slot="actions">
-      <IngressRouteActions ingressRoute="{routeUI}" detailed="{true}" on:update="{() => (routeUI = routeUI)}" />
+      <IngressRouteActions ingressRoute={routeUI} detailed={true} on:update={() => (routeUI = routeUI)} />
     </svelte:fragment>
     <div slot="detail" class="flex py-2 w-full justify-end text-sm text-gray-700">
-      <StateChange state="{routeUI.status}" />
+      <StateChange state={routeUI.status} />
     </div>
     <svelte:fragment slot="tabs">
-      <Tab
-        title="Summary"
-        selected="{isTabSelected($router.path, 'summary')}"
-        url="{getTabUrl($router.path, 'summary')}" />
-      <Tab
-        title="Inspect"
-        selected="{isTabSelected($router.path, 'inspect')}"
-        url="{getTabUrl($router.path, 'inspect')}" />
-      <Tab title="Kube" selected="{isTabSelected($router.path, 'kube')}" url="{getTabUrl($router.path, 'kube')}" />
+      <Tab title="Summary" selected={isTabSelected($router.path, 'summary')} url={getTabUrl($router.path, 'summary')} />
+      <Tab title="Inspect" selected={isTabSelected($router.path, 'inspect')} url={getTabUrl($router.path, 'inspect')} />
+      <Tab title="Kube" selected={isTabSelected($router.path, 'kube')} url={getTabUrl($router.path, 'kube')} />
     </svelte:fragment>
     <svelte:fragment slot="content">
       <Route path="/summary" breadcrumb="Summary" navigationHint="tab">
-        <ServiceDetailsSummary ingressRoute="{kubeService}" kubeError="{kubeError}" />
+        <ServiceDetailsSummary ingressRoute={kubeService} kubeError={kubeError} />
       </Route>
       <Route path="/inspect" breadcrumb="Inspect" navigationHint="tab">
-        <MonacoEditor content="{JSON.stringify(kubeService, undefined, 2)}" language="json" />
+        <MonacoEditor content={JSON.stringify(kubeService, undefined, 2)} language="json" />
       </Route>
       <Route path="/kube" breadcrumb="Kube" navigationHint="tab">
-        <KubeEditYAML content="{stringify(kubeService)}" />
+        <KubeEditYAML content={stringify(kubeService)} />
       </Route>
     </svelte:fragment>
   </DetailsPage>

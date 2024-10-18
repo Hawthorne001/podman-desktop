@@ -18,11 +18,12 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { router } from 'tinro';
-import { beforeAll, expect, test, vi } from 'vitest';
+import { beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
+import { withConfirmation } from '/@/lib/dialogs/messagebox-utils';
 import ImageActions from '/@/lib/image/ImageActions.svelte';
 import type { ImageInfoUI } from '/@/lib/image/ImageInfoUI';
 
@@ -37,8 +38,18 @@ vi.mock('./image-utils', () => {
   };
 });
 
+vi.mock('/@/lib/dialogs/messagebox-utils', () => ({
+  withConfirmation: vi.fn(),
+}));
+
+class ResizeObserver {
+  observe = vi.fn();
+  disconnect = vi.fn();
+  unobserve = vi.fn();
+}
 beforeAll(() => {
   (window as any).showMessageBox = showMessageBoxMock;
+  (window as any).ResizeObserver = ResizeObserver;
 
   (window as any).getContributedMenus = getContributedMenusMock;
   (window as any).hasAuthconfigForImage = vi.fn();
@@ -50,15 +61,33 @@ const fakedImage: ImageInfoUI = {
   name: 'dummy',
 } as unknown as ImageInfoUI;
 
+class Image {
+  #status: string;
+  constructor(
+    public name: string,
+    initialStatus: string,
+  ) {
+    this.#status = initialStatus;
+  }
+
+  set status(status: string) {
+    this.#status = status;
+  }
+
+  get status(): string {
+    return this.#status;
+  }
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+});
+
 test('Expect showMessageBox to be called when error occurs', async () => {
-  // Mock the showMessageBox to return 0 (yes)
-  showMessageBoxMock.mockResolvedValue({ response: 0 });
+  vi.mocked(withConfirmation).mockImplementation(f => f());
   getContributedMenusMock.mockImplementation(() => Promise.resolve([]));
 
-  const image: ImageInfoUI = {
-    name: 'dummy',
-    status: 'UNUSED',
-  } as ImageInfoUI;
+  const image: ImageInfoUI = new Image('dummy', 'UNUSED') as unknown as ImageInfoUI;
 
   render(ImageActions, {
     onPushImage: vi.fn(),
@@ -150,18 +179,22 @@ test('Expect no dropdown when several contributions and dropdownMenu mode on', a
 
   await fireEvent.click(screen.getByLabelText('kebab menu'));
 
-  await waitFor(() => {
+  await waitFor(async () => {
     const button = screen.getByTitle('dummy-contrib');
     expect(button).toBeDefined();
-    expect(button.firstChild?.nodeName.toLowerCase()).toBe('svg');
-    expect(button.lastChild?.nodeName.toLowerCase()).toBe('span');
-    expect(button.lastChild?.textContent).toBe('dummy-contrib');
+    const img = within(button).getByRole('img', { hidden: true });
+    expect(img).toBeDefined();
+    expect(img.nodeName.toLowerCase()).toBe('svg');
+
+    const button2 = screen.getByTitle('dummy-contrib-2');
+    expect(button2).toBeDefined();
+    const img2 = within(button2).getByRole('img', { hidden: true });
+    expect(img2).toBeDefined();
+    expect(img2.nodeName.toLowerCase()).toBe('svg');
   });
 });
 
 test('Expect Push image to be there', async () => {
-  // Mock the showMessageBox to return 0 (yes)
-  showMessageBoxMock.mockResolvedValue({ response: 0 });
   getContributedMenusMock.mockImplementation(() => Promise.resolve([]));
 
   const image: ImageInfoUI = {
@@ -180,6 +213,7 @@ test('Expect Push image to be there', async () => {
 });
 
 test('Expect Save image to be there', async () => {
+  getContributedMenusMock.mockImplementation(() => Promise.resolve([]));
   const goToMock = vi.spyOn(router, 'goto');
 
   const image: ImageInfoUI = {
@@ -199,4 +233,27 @@ test('Expect Save image to be there', async () => {
   await userEvent.click(button);
 
   expect(goToMock).toBeCalledWith('/images/save');
+});
+
+test('Expect withConfirmation to indicate image name and tag', async () => {
+  getContributedMenusMock.mockImplementation(() => Promise.resolve([]));
+
+  const image: ImageInfoUI = {
+    name: 'image-name',
+    status: 'UNUSED',
+    tag: '1.0',
+  } as ImageInfoUI;
+
+  render(ImageActions, {
+    onPushImage: vi.fn(),
+    onRenameImage: vi.fn(),
+    image,
+  });
+  const button = screen.getByTitle('Delete Image');
+  expect(button).toBeDefined();
+  await fireEvent.click(button);
+
+  await waitFor(() => {
+    expect(withConfirmation).toHaveBeenNthCalledWith(1, expect.anything(), 'delete image image-name:1.0');
+  });
 });

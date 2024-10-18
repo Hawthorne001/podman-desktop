@@ -16,8 +16,9 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
-import type { Locator, Page } from '@playwright/test';
+import { type Locator, type Page, test } from '@playwright/test';
 
+import { waitUntil } from '../../utility/wait';
 import { BasePage } from './base-page';
 
 /**
@@ -34,6 +35,8 @@ export abstract class MainPage extends BasePage {
   readonly additionalActions: Locator;
   readonly bottomAdditionalActions: Locator;
   readonly heading: Locator;
+  readonly noContainerEngineHeading: Locator;
+  readonly noImagesHeading: Locator;
 
   constructor(page: Page, title: string) {
     super(page);
@@ -43,8 +46,10 @@ export abstract class MainPage extends BasePage {
     this.search = this.mainPage.getByRole('region', { name: 'search' });
     this.content = this.mainPage.getByRole('region', { name: 'content' });
     this.additionalActions = this.header.getByRole('group', { name: 'additionalActions' });
-    this.bottomAdditionalActions = this.header.getByRole('group', { name: 'bottomAdditionalActions' });
+    this.bottomAdditionalActions = this.search.getByRole('group', { name: 'bottomAdditionalActions' });
     this.heading = this.header.getByRole('heading', { name: this.title });
+    this.noContainerEngineHeading = this.content.getByRole('heading', { name: 'No Container Engine', exact: true });
+    this.noImagesHeading = this.content.getByRole('heading', { name: `No ${this.title}`, exact: true });
   }
 
   /**
@@ -52,21 +57,77 @@ export abstract class MainPage extends BasePage {
    * @returns true, if there are any items present in the content's table, false otherwise
    */
   async pageIsEmpty(): Promise<boolean> {
-    if (await this.noContainerEngine()) return true;
-
-    const noImagesHeading = this.content.getByRole('heading', { name: `No ${this.title}`, exact: true });
-    return (await noImagesHeading.count()) > 0;
+    return await test.step('Check if the page is empty', async () => {
+      if (await this.noContainerEngine()) return true;
+      return (await this.noImagesHeading.count()) > 0;
+    });
   }
 
   async noContainerEngine(): Promise<boolean> {
-    const noContainerEngineHeading = this.content.getByRole('heading', { name: 'No Container Engine', exact: true });
-
-    return (await noContainerEngineHeading.count()) > 0;
+    return await test.step('Check if there is no container engine', async () => {
+      return (await this.noContainerEngineHeading.count()) > 0;
+    });
   }
 
   async getTable(): Promise<Locator> {
-    if (await this.pageIsEmpty()) throw Error('Page is empty, there is no content');
-
     return this.content.getByRole('table');
+  }
+
+  async rowsAreVisible(): Promise<boolean> {
+    return await this.page.getByRole('row').first().isVisible();
+  }
+
+  async getAllTableRows(): Promise<Locator[]> {
+    return await (await this.getTable()).getByRole('row').all();
+  }
+
+  async getRowFromTableByName(name: string): Promise<Locator | undefined> {
+    return await test.step(`Get row from ${this.title} page table by name: ${name}`, async () => {
+      if (await this.pageIsEmpty()) {
+        return undefined;
+      }
+
+      try {
+        const rows = await this.getAllTableRows();
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const nameCell = await rows[i].getByRole('cell').nth(3).getByText(name, { exact: true }).count();
+          if (nameCell) {
+            return rows[i];
+          } else if (this.title === 'containers') {
+            const subRow = await rows[i].getByLabel(name, { exact: true }).count();
+            if (subRow) {
+              return rows[i];
+            }
+          }
+        }
+      } catch (err) {
+        console.log(`Exception caught on ${this.title} page with message: ${err}`);
+      }
+      return undefined;
+    });
+  }
+
+  async getRowsFromTableByStatus(status: string): Promise<Locator[]> {
+    return await test.step(`Get rows from ${this.title} page table by status: ${status}`, async () => {
+      await waitUntil(async () => await this.rowsAreVisible(), { sendError: false });
+
+      const rows = await this.getAllTableRows();
+      const filteredRows = [];
+      for (let rowNum = 1; rowNum < rows.length; rowNum++) {
+        //skip header
+        const statusCount = await rows[rowNum].getByRole('cell').nth(2).getByTitle(status, { exact: true }).count();
+        if (statusCount > 0) filteredRows.push(rows[rowNum]);
+      }
+      return filteredRows;
+    });
+  }
+
+  async countRowsFromTable(): Promise<number> {
+    return await test.step(`Count rows from ${this.title} page table`, async () => {
+      await waitUntil(async () => await this.rowsAreVisible(), { sendError: false });
+      const table = this.content.getByRole('table');
+      const rows = await table.getByRole('row').all();
+      return rows.length > 1 ? rows.length - 1 : 0;
+    });
   }
 }

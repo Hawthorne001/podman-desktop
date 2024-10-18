@@ -67,24 +67,25 @@ let screen: 'installed' | 'catalog' = 'installed';
 let installManualImageModal: boolean = false;
 </script>
 
-<NavPage bind:searchTerm="{searchTerm}" title="extensions">
+<NavPage bind:searchTerm={searchTerm} title="extensions">
   <svelte:fragment slot="additional-actions">
     <Button
-      on:click="{() => {
+      on:click={() => {
         installManualImageModal = true;
-      }}"
-      icon="{faCloudDownload}"
-      title="Install manually an extension">Install custom...</Button>
+      }}
+      icon={faCloudDownload}
+      title="Install manually an extension"
+      aria-label="Install custom">Install custom...</Button>
   </svelte:fragment>
 
   <svelte:fragment slot="bottom-additional-actions">
     <!-- display filter out items-->
     {#if filteredInstalledItems > 0 && screen === 'installed'}
-      <div class="text-sm text-gray-400">
+      <div class="text-sm text-[var(--pd-content-text)]">
         Filtered out {filteredInstalledItems} items of {$combinedInstalledExtensions.length}
       </div>
     {:else if filteredCatalogItems > 0 && screen === 'catalog'}
-      <div class="text-sm text-gray-400">
+      <div class="text-sm text-[var(--pd-content-text)]">
         Filtered out {filteredCatalogItems} items of {$enhancedCatalogExtensions.length}
       </div>
     {/if}
@@ -93,38 +94,44 @@ let installManualImageModal: boolean = false;
   <svelte:fragment slot="tabs">
     <Button
       type="tab"
-      on:click="{() => {
+      on:click={() => {
         screen = 'installed';
-      }}"
-      selected="{screen === 'installed'}">Installed</Button>
+      }}
+      selected={screen === 'installed'}>Installed</Button>
     <Button
       type="tab"
-      on:click="{() => {
+      on:click={() => {
         screen = 'catalog';
-      }}"
-      selected="{screen === 'catalog'}">Catalog</Button>
+      }}
+      selected={screen === 'catalog'}>Catalog</Button>
   </svelte:fragment>
 
   <div class="flex min-w-full h-full" slot="content">
-    {#if searchTerm && $filteredInstalledExtensions.length === 0 && $filteredCatalogExtensions.length === 0}
-      <FilteredEmptyScreen
-        icon="{ExtensionIcon}"
-        kind="extensions"
-        searchTerm="{searchTerm}"
-        on:resetFilter="{() => (searchTerm = '')}" />
-    {/if}
-
     {#if screen === 'installed'}
-      <InstalledExtensionList extensionInfos="{$filteredInstalledExtensions}" />
+      {#if searchTerm && $filteredInstalledExtensions.length === 0}
+        <FilteredEmptyScreen
+          icon={ExtensionIcon}
+          kind="extensions"
+          searchTerm={searchTerm}
+          on:resetFilter={() => (searchTerm = '')} />
+      {/if}
+      <InstalledExtensionList extensionInfos={$filteredInstalledExtensions} />
     {:else}
-      <CatalogExtensionList catalogExtensions="{$filteredCatalogExtensions}" />
+      {#if searchTerm && $filteredCatalogExtensions.length === 0}
+        <FilteredEmptyScreen
+          icon={ExtensionIcon}
+          kind="extensions"
+          searchTerm={searchTerm}
+          on:resetFilter={() => (searchTerm = '')} />
+      {/if}
+      <CatalogExtensionList showEmptyScreen={!searchTerm} catalogExtensions={$filteredCatalogExtensions} />
     {/if}
   </div>
 </NavPage>
 
 {#if installManualImageModal}
   <InstallManuallyExtensionModal
-    closeCallback="{() => {
+    closeCallback={() => {
       closeModal();
-    }}" />
+    }} />
 {/if}

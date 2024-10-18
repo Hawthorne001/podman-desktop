@@ -1,13 +1,13 @@
 <script lang="ts">
 import { faCubes } from '@fortawesome/free-solid-svg-icons';
 import type { AuditRequestItems, AuditResult, ConfigurationScope } from '@podman-desktop/api';
-import { Button, EmptyScreen, ErrorMessage, LinearProgress, Spinner } from '@podman-desktop/ui-svelte';
+import { Button, EmptyScreen, ErrorMessage, Spinner } from '@podman-desktop/ui-svelte';
+import type { Terminal } from '@xterm/xterm';
 import { onDestroy, onMount } from 'svelte';
 /* eslint-disable import/no-duplicates */
 // https://github.com/import-js/eslint-plugin-import/issues/1479
 import { get, type Unsubscriber } from 'svelte/store';
 import { router } from 'tinro';
-import type { Terminal } from 'xterm';
 
 import type { ContextUI } from '/@/lib/context/context';
 import { context } from '/@/stores/context';
@@ -30,7 +30,7 @@ import {
   disconnectUI,
   eventCollect,
   reconnectUI,
-  startTask,
+  registerConnectionCallback,
 } from './preferences-connection-rendering-task';
 import PreferencesRenderingItemFormat from './PreferencesRenderingItemFormat.svelte';
 import { calcHalfCpuCores, getInitialValue, isPropertyValidInContext, writeToTerminal } from './Util';
@@ -43,7 +43,8 @@ export let callback: (
   data: any,
   handlerKey: symbol,
   collect: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-  tokenId?: number,
+  tokenId: number | undefined,
+  taskId: number | undefined,
 ) => Promise<void>;
 export let taskId: number | undefined = undefined;
 export let disableEmptyScreen = false;
@@ -59,13 +60,6 @@ let operationFailed = false;
 export let pageIsLoading = true;
 let showLogs = false;
 let tokenId: number | undefined;
-
-const providerDisplayName =
-  (providerInfo.containerProviderConnectionCreation
-    ? providerInfo.containerProviderConnectionCreationDisplayName || undefined
-    : providerInfo.kubernetesProviderConnectionCreation
-      ? providerInfo.kubernetesProviderConnectionCreationDisplayName
-      : undefined) || providerInfo.name;
 
 let osMemory: string;
 let osCpu: string;
@@ -102,7 +96,10 @@ onMount(async () => {
   osMemory = await window.getOsMemory();
   osCpu = await window.getOsCpu();
   osFreeDisk = await window.getOsFreeDiskSize();
-  contextsUnsubscribe = context.subscribe(value => (globalContext = value));
+  contextsUnsubscribe = context.subscribe(value => {
+    globalContext = value;
+    loadConnectionParams().catch(() => console.error('unable to reload connection params'));
+  });
 
   // check if we have an existing action
   const operationConnectionInfoMap = get(operationConnectionsInfo);
@@ -125,8 +122,41 @@ onMount(async () => {
     }
   }
 
+  if (taskId === undefined) {
+    taskId = operationConnectionInfoMap.size + 1;
+  }
+
+  const data: any = {};
+  for (let field of configurationKeys) {
+    const id = field.id;
+    if (id) {
+      data[id] = field.default;
+    }
+  }
+  if (!connectionInfo) {
+    try {
+      connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data);
+    } catch (e: any) {
+      console.warn(e.message);
+    }
+  }
+  pageIsLoading = false;
+});
+
+onDestroy(() => {
+  if (loggerHandlerKey) {
+    disconnectUI(loggerHandlerKey);
+  }
+  if (contextsUnsubscribe) {
+    contextsUnsubscribe();
+  }
+});
+
+async function loadConnectionParams() {
   configurationKeys = properties
-    .filter(property => property.scope === propertyScope)
+    .filter(property =>
+      Array.isArray(property.scope) ? property.scope.find(s => s === propertyScope) : property.scope === propertyScope,
+    )
     .filter(property => property.id?.startsWith(providerInfo.id))
     .filter(property => isPropertyValidInContext(property.when, globalContext))
     .map(property => {
@@ -169,36 +199,7 @@ onMount(async () => {
   if (connectionInfo) {
     configurationKeys = configurationKeys.filter(property => !property.readonly);
   }
-
-  if (taskId === undefined) {
-    taskId = operationConnectionInfoMap.size + 1;
-  }
-
-  const data: any = {};
-  for (let field of configurationKeys) {
-    const id = field.id;
-    if (id) {
-      data[id] = field.default;
-    }
-  }
-  if (!connectionInfo) {
-    try {
-      connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data);
-    } catch (e: any) {
-      console.warn(e.message);
-    }
-  }
-  pageIsLoading = false;
-});
-
-onDestroy(() => {
-  if (loggerHandlerKey) {
-    disconnectUI(loggerHandlerKey);
-  }
-  if (contextsUnsubscribe) {
-    contextsUnsubscribe();
-  }
-});
+}
 
 function handleInvalidComponent() {
   isValid = false;
@@ -207,6 +208,10 @@ function handleInvalidComponent() {
 async function handleValidComponent() {
   isValid = true;
 
+  // it can happen (at least in tests) that some fields are not set yet (NumberItem will wait 500ms before to change value)
+  if (!formEl) {
+    return;
+  }
   const formData = new FormData(formEl);
   const data: { [key: string]: FormDataEntryValue } = {};
   for (let field of formData) {
@@ -215,7 +220,9 @@ async function handleValidComponent() {
   }
 
   try {
-    connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data as AuditRequestItems);
+    const auditResult = await window.auditConnectionParameters(providerInfo.internalId, data as AuditRequestItems);
+    isValid = auditResult.records.filter(record => record.type === 'error').length === 0;
+    connectionAuditResult = auditResult;
   } catch (err: unknown) {
     if (err instanceof Error) {
       console.warn(err.message);
@@ -228,8 +235,13 @@ async function handleValidComponent() {
 function internalSetConfigurationValue(id: string, modified: boolean, value: string | boolean | number) {
   const item = configurationValues.get(id);
   if (item) {
-    item.modified = modified;
-    item.value = value;
+    // if the value has already been modified by the user and this is not an explicit user modification we do not update the value
+    // it may happen that the UI refreshes for some reason (like a value chosen in a dropdownlist) and we do not have to reset the
+    // values already entered (modified = true) by the user
+    if (modified || !item.modified) {
+      item.modified = modified;
+      item.value = value;
+    }
   } else {
     configurationValues.set(id, { modified, value });
   }
@@ -250,7 +262,9 @@ async function getConfigurationValue(configurationKey: IConfigurationPropertyRec
       internalSetConfigurationValue(configurationKey.id, false, value as string);
       return value;
     }
-    return getInitialValue(configurationKey);
+    const initialValue = await getInitialValue(configurationKey);
+    internalSetConfigurationValue(configurationKey.id, false, initialValue as string);
+    return initialValue;
   }
 }
 
@@ -315,7 +329,7 @@ function updateStore() {
         operationInProgress: inProgress,
         operationSuccessful: operationSuccessful,
         operationStarted: operationStarted,
-        errorMessage: errorMessage || '',
+        errorMessage: errorMessage ?? '',
         tokenId,
       });
     }
@@ -362,13 +376,9 @@ async function handleOnSubmit(e: any) {
     tokenId = await window.getCancellableTokenSource();
     // clear terminal
     logsTerminal?.clear();
-    loggerHandlerKey = startTask(
-      connectionInfo ? `Update ${providerDisplayName} ${connectionInfo.name}` : `Create ${providerDisplayName}`,
-      `/preferences/provider-task/${providerInfo.internalId}/${taskId}`,
-      getLoggerHandler(),
-    );
+    loggerHandlerKey = registerConnectionCallback(getLoggerHandler());
     updateStore();
-    await callback(providerInfo.internalId, data, loggerHandlerKey, eventCollect, tokenId);
+    await callback(providerInfo.internalId, data, loggerHandlerKey, eventCollect, tokenId, taskId);
   } catch (error: any) {
     //display error
     tokenId = undefined;
@@ -416,12 +426,23 @@ function closePage() {
 function getConnectionResourceConfigurationValue(
   configurationKey: IConfigurationPropertyRecordedSchema,
   configurationValues: Map<string, { modified: boolean; value: string | boolean | number }>,
-): number | undefined {
+): string | boolean | number | undefined {
   if (configurationKey.id && configurationValues.has(configurationKey.id)) {
     const value = configurationValues.get(configurationKey.id);
-    if (typeof value?.value === 'number') {
+    if (value?.value !== undefined) {
       return value.value;
     }
+  }
+  return undefined;
+}
+
+function getConnectionResourceConfigurationNumberValue(
+  configurationKey: IConfigurationPropertyRecordedSchema,
+  configurationValues: Map<string, { modified: boolean; value: string | boolean | number }>,
+): number | undefined {
+  const value = getConnectionResourceConfigurationValue(configurationKey, configurationValues);
+  if (typeof value === 'number') {
+    return value;
   }
   return undefined;
 }
@@ -429,13 +450,13 @@ function getConnectionResourceConfigurationValue(
 
 <div class="flex flex-col w-full h-full overflow-hidden">
   {#if operationSuccessful && !disableEmptyScreen}
-    <EmptyScreen icon="{faCubes}" title="{operationLabel}" message="Successful operation">
+    <EmptyScreen icon={faCubes} title={operationLabel} message="Successful operation">
       <Button
         class="py-3"
-        on:click="{() => {
+        on:click={() => {
           cleanup();
           router.goto('/preferences/resources');
-        }}">
+        }}>
         Go back to resources
       </Button>
     </EmptyScreen>
@@ -449,83 +470,82 @@ function getConnectionResourceConfigurationValue(
         {#if operationStarted || errorMessage}
           <div class="w-4/5">
             <div class="mt-2 mb-8">
-              {#if inProgress}
-                <LinearProgress />
-              {/if}
               <div class="mt-2 float-right">
                 <button
                   aria-label="Show Logs"
                   class="text-xs mr-3 hover:underline"
-                  on:click="{() => (showLogs = !showLogs)}"
+                  on:click={() => (showLogs = !showLogs)}
                   >Show Logs <i class="fas {showLogs ? 'fa-angle-up' : 'fa-angle-down'}" aria-hidden="true"></i
                   ></button>
                 <button
                   aria-label="Cancel {operationLabel.toLowerCase()}"
                   class="text-xs {errorMessage ? 'mr-3' : ''} hover:underline {tokenId ? '' : 'hidden'}"
-                  disabled="{!tokenId}"
-                  on:click="{cancelCreation}">Cancel</button>
+                  disabled={!tokenId}
+                  on:click={cancelCreation}>Cancel</button>
                 <button
                   class="text-xs hover:underline {inProgress ? 'hidden' : ''}"
                   aria-label="Close panel"
-                  on:click="{closePanel}">Close</button>
+                  on:click={closePanel}>Close</button>
               </div>
             </div>
             <div id="log" class="pt-2 h-80 {showLogs ? '' : 'hidden'}">
               <div class="w-full h-full">
-                <TerminalWindow bind:terminal="{logsTerminal}" />
+                <TerminalWindow bind:terminal={logsTerminal} />
               </div>
             </div>
           </div>
         {/if}
         {#if errorMessage}
           <div class="pt-3 mt-2 w-4/5 h-fit">
-            <ErrorMessage error="{errorMessage}" />
+            <ErrorMessage error={errorMessage} />
           </div>
         {/if}
 
         <div class="p-3 mt-2 w-4/5 h-fit {inProgress ? 'opacity-40 pointer-events-none' : ''}">
-          {#if connectionAuditResult && (connectionAuditResult.records?.length || 0) > 0}
-            <AuditMessageBox auditResult="{connectionAuditResult}" />
+          {#if connectionAuditResult && (connectionAuditResult.records?.length ?? 0) > 0}
+            <AuditMessageBox auditResult={connectionAuditResult} />
           {/if}
           <form
             novalidate
             class="p-2 space-y-7 h-fit"
-            on:submit|preventDefault="{handleOnSubmit}"
-            bind:this="{formEl}"
+            on:submit|preventDefault={handleOnSubmit}
+            bind:this={formEl}
             aria-label="Properties Information">
             {#each configurationKeys as configurationKey}
               <div class="mb-2.5">
-                <div class="flex flex-row items-center font-semibold text-xs h-[30px]">
+                <div class="flex flex-row items-center h-[30px]">
                   {#if configurationKey.description}
                     {configurationKey.description}:
                   {:else if configurationKey.markdownDescription && configurationKey.type !== 'markdown'}
-                    <Markdown>{configurationKey.markdownDescription}:</Markdown>
+                    <Markdown markdown={configurationKey.markdownDescription} />
                   {/if}
                   {#if configurationKey.format === 'memory' || configurationKey.format === 'diskSize' || configurationKey.format === 'cpu'}
-                    <EditableConnectionResourceItem
-                      record="{configurationKey}"
-                      value="{getConnectionResourceConfigurationValue(configurationKey, configurationValues)}"
-                      onSave="{setConfigurationValue}" />
+                    <div class="text-gray-600">
+                      <EditableConnectionResourceItem
+                        record={configurationKey}
+                        value={getConnectionResourceConfigurationNumberValue(configurationKey, configurationValues)}
+                        onSave={setConfigurationValue} />
+                    </div>
                   {/if}
                 </div>
                 {#if configurationValues}
                   <PreferencesRenderingItemFormat
-                    invalidRecord="{handleInvalidComponent}"
-                    validRecord="{handleValidComponent}"
-                    record="{configurationKey}"
-                    setRecordValue="{setConfigurationValue}"
-                    enableSlider="{true}"
-                    initialValue="{getConfigurationValue(configurationKey)}"
-                    givenValue="{getConnectionResourceConfigurationValue(configurationKey, configurationValues)}" />
+                    invalidRecord={handleInvalidComponent}
+                    validRecord={handleValidComponent}
+                    record={configurationKey}
+                    setRecordValue={setConfigurationValue}
+                    enableSlider={true}
+                    initialValue={getConfigurationValue(configurationKey)}
+                    givenValue={getConnectionResourceConfigurationValue(configurationKey, configurationValues)} />
                 {/if}
               </div>
             {/each}
             <div class="w-full">
               <div class="float-right">
                 {#if !hideCloseButton}
-                  <Button type="link" aria-label="Close page" on:click="{closePage}">Close</Button>
+                  <Button type="link" aria-label="Close page" on:click={closePage}>Close</Button>
                 {/if}
-                <Button disabled="{!isValid}" inProgress="{inProgress}" on:click="{() => formEl.requestSubmit()}"
+                <Button disabled={!isValid} inProgress={inProgress} on:click={() => formEl.requestSubmit()}
                   >{buttonLabel}</Button>
               </div>
             </div>

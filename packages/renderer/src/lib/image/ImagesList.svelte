@@ -24,6 +24,7 @@ import { containersInfos } from '../../stores/containers';
 import { context } from '../../stores/context';
 import { filtered, imagesInfos, searchPattern } from '../../stores/images';
 import { providerInfos } from '../../stores/providers';
+import { withBulkConfirmation } from '../actions/BulkActions';
 import type { ContextUI } from '../context/context';
 import type { EngineInfoUI } from '../engine/EngineInfoUI';
 import Prune from '../engine/Prune.svelte';
@@ -39,6 +40,7 @@ import type { ImageInfoUI } from './ImageInfoUI';
 import NoContainerEngineEmptyScreen from './NoContainerEngineEmptyScreen.svelte';
 
 export let searchTerm = '';
+export let imageEngineId = '';
 $: searchPattern.set(searchTerm);
 
 let images: ImageInfoUI[] = [];
@@ -57,7 +59,7 @@ let viewContributions: ViewInfoUI[] = [];
 function updateImages(globalContext: ContextUI) {
   const computedImages = storeImages
     .map((imageInfo: ImageInfo) =>
-      imageUtils.getImagesInfoUI(imageInfo, storeContainers, globalContext, viewContributions),
+      imageUtils.getImagesInfoUI(imageInfo, storeContainers, globalContext, viewContributions, storeImages),
     )
     .flat();
 
@@ -71,7 +73,24 @@ function updateImages(globalContext: ContextUI) {
     }
   });
   computedImages.sort((first, second) => second.createdAt - first.createdAt);
+
+  // Go through each image and if it has a children, remove the "children" from computedImages so they do not show up
+  // in the table
+  computedImages.forEach(image => {
+    if (image.children) {
+      image.children.forEach(child => {
+        const index = computedImages.findIndex(computedImage => computedImage.id === child.id);
+        if (index !== -1) {
+          computedImages.splice(index, 1);
+        }
+      });
+    }
+  });
+
   images = computedImages;
+  if (imageEngineId) {
+    images = images.filter(image => image.engineId === imageEngineId);
+  }
 
   // Map engineName, engineId and engineType from currentContainers to EngineInfoUI[]
   const engines = images.map(container => {
@@ -280,7 +299,7 @@ let sizeColumn = new TableColumn<ImageInfoUI, string>('Size', {
   comparator: (a, b) => b.size - a.size,
 });
 
-const columns: TableColumn<ImageInfoUI, ImageInfoUI | string>[] = [
+const columns = [
   statusColumn,
   nameColumn,
   envColumn,
@@ -298,46 +317,51 @@ const row = new TableRow<ImageInfoUI>({
   // If it is a manifest, it is not selectable (no delete functionality yet)
   selectable: image => image.status === 'UNUSED' && !image.isManifest,
   disabledText: 'Image is used by a container',
+  children: image => {
+    return image.children ?? [];
+  },
 });
 </script>
 
-<NavPage bind:searchTerm="{searchTerm}" title="images">
+<NavPage bind:searchTerm={searchTerm} title="images">
   <svelte:fragment slot="additional-actions">
     {#if $imagesInfos.length > 0}
-      <Prune type="images" engines="{enginesList}" />
+      <Prune type="images" engines={enginesList} />
     {/if}
     <Button
-      on:click="{() => loadImages()}"
+      on:click={() => loadImages()}
       title="Load Images From Tar Archives"
-      icon="{faUpload}"
+      icon={faUpload}
       aria-label="Load Images">
       Load
     </Button>
     <Button
-      on:click="{() => importImage()}"
+      on:click={() => importImage()}
       title="Import Containers From Filesystem"
-      icon="{faArrowCircleDown}"
+      icon={faArrowCircleDown}
       aria-label="Import Image">
       Import
     </Button>
-    <Button on:click="{() => gotoPullImage()}" title="Pull Image From a Registry" icon="{faArrowCircleDown}">
-      Pull
-    </Button>
-    <Button on:click="{() => gotoBuildImage()}" title="Build Image From Containerfile" icon="{faCube}">Build</Button>
+    <Button on:click={() => gotoPullImage()} title="Pull Image From a Registry" icon={faArrowCircleDown}>Pull</Button>
+    <Button on:click={() => gotoBuildImage()} title="Build Image From Containerfile" icon={faCube}>Build</Button>
   </svelte:fragment>
 
   <svelte:fragment slot="bottom-additional-actions">
     {#if selectedItemsNumber > 0}
       <Button
-        on:click="{() => deleteSelectedImages()}"
+        on:click={() =>
+          withBulkConfirmation(
+            deleteSelectedImages,
+            `delete ${selectedItemsNumber} image${selectedItemsNumber > 1 ? 's' : ''}`,
+          )}
         title="Delete {selectedItemsNumber} selected items"
-        bind:inProgress="{bulkDeleteInProgress}"
-        icon="{faTrash}" />
+        bind:inProgress={bulkDeleteInProgress}
+        icon={faTrash} />
       <Button
-        on:click="{() => saveSelectedImages()}"
+        on:click={() => saveSelectedImages()}
         title="Save {selectedItemsNumber} selected items"
         aria-label="Save images"
-        icon="{faDownload}" />
+        icon={faDownload} />
       <span>On {selectedItemsNumber} selected items.</span>
     {/if}
   </svelte:fragment>
@@ -345,20 +369,20 @@ const row = new TableRow<ImageInfoUI>({
   <div class="flex min-w-full h-full" slot="content">
     <Table
       kind="image"
-      bind:this="{table}"
-      bind:selectedItemsNumber="{selectedItemsNumber}"
-      data="{images}"
-      columns="{columns}"
-      row="{row}"
+      bind:this={table}
+      bind:selectedItemsNumber={selectedItemsNumber}
+      data={images}
+      columns={columns}
+      row={row}
       defaultSortColumn="Age"
-      on:update="{() => (images = images)}">
+      on:update={() => (images = images)}>
     </Table>
 
     {#if providerConnections.length === 0}
       <NoContainerEngineEmptyScreen />
     {:else if $filtered.length === 0}
       {#if searchTerm}
-        <FilteredEmptyScreen icon="{ImageIcon}" kind="images" bind:searchTerm="{searchTerm}" />
+        <FilteredEmptyScreen icon={ImageIcon} kind="images" bind:searchTerm={searchTerm} />
       {:else}
         <ImageEmptyScreen />
       {/if}

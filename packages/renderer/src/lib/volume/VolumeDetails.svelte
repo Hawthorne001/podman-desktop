@@ -1,11 +1,10 @@
 <script lang="ts">
-import { Tab } from '@podman-desktop/ui-svelte';
+import { StatusIcon, Tab } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
 import Route from '../../Route.svelte';
 import { volumeListInfos } from '../../stores/volumes';
-import StatusIcon from '../images/StatusIcon.svelte';
 import VolumeIcon from '../images/VolumeIcon.svelte';
 import DetailsPage from '../ui/DetailsPage.svelte';
 import { getTabUrl, isTabSelected } from '../ui/Util';
@@ -42,25 +41,19 @@ onMount(() => {
 </script>
 
 {#if volume}
-  <DetailsPage title="{volume.shortName}" subtitle="{volume.humanSize}" bind:this="{detailsPage}">
-    <StatusIcon slot="icon" icon="{VolumeIcon}" size="{24}" status="{volume.status}" />
-    <VolumeActions slot="actions" volume="{volume}" detailed="{true}" on:update="{() => (volume = volume)}" />
+  <DetailsPage title={volume.shortName} subtitle={volume.humanSize} bind:this={detailsPage}>
+    <StatusIcon slot="icon" icon={VolumeIcon} size={24} status={volume.status} />
+    <VolumeActions slot="actions" volume={volume} detailed={true} on:update={() => (volume = volume)} />
     <svelte:fragment slot="tabs">
-      <Tab
-        title="Summary"
-        selected="{isTabSelected($router.path, 'summary')}"
-        url="{getTabUrl($router.path, 'summary')}" />
-      <Tab
-        title="Inspect"
-        selected="{isTabSelected($router.path, 'inspect')}"
-        url="{getTabUrl($router.path, 'inspect')}" />
+      <Tab title="Summary" selected={isTabSelected($router.path, 'summary')} url={getTabUrl($router.path, 'summary')} />
+      <Tab title="Inspect" selected={isTabSelected($router.path, 'inspect')} url={getTabUrl($router.path, 'inspect')} />
     </svelte:fragment>
     <svelte:fragment slot="content">
       <Route path="/summary" breadcrumb="Summary" navigationHint="tab">
-        <VolumeDetailsSummary volume="{volume}" />
+        <VolumeDetailsSummary volume={volume} />
       </Route>
       <Route path="/inspect" breadcrumb="Inspect" navigationHint="tab">
-        <VolumeDetailsInspect volume="{volume}" />
+        <VolumeDetailsInspect volume={volume} />
       </Route>
     </svelte:fragment>
   </DetailsPage>

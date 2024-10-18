@@ -22,13 +22,19 @@ import type { AddressInfo } from 'node:net';
 import { createProxy, type ProxyServer } from 'proxy';
 import { describe, expect, test, vi } from 'vitest';
 
+import type { Certificates } from '/@/plugin/certificates.js';
 import type { ConfigurationRegistry } from '/@/plugin/configuration-registry.js';
 import { ensureURL, Proxy } from '/@/plugin/proxy.js';
+import { ProxyState } from '/@api/proxy.js';
 
 const URL = 'https://podman-desktop.io';
 
+const certificates: Certificates = {
+  getAllCertificates: vi.fn(),
+} as unknown as Certificates;
+
 function getConfigurationRegistry(
-  enabled: boolean,
+  enabled: number,
   http: string | undefined,
   https: string | undefined,
   no: string | undefined,
@@ -42,6 +48,8 @@ function getConfigurationRegistry(
       return https;
     } else if (name === 'no') {
       return no;
+    } else {
+      return '';
     }
   });
   return {
@@ -61,8 +69,8 @@ async function buildProxy(): Promise<ProxyServer> {
 }
 
 test('fetch without proxy', async () => {
-  const configurationRegistry = getConfigurationRegistry(false, undefined, undefined, undefined);
-  const proxy = new Proxy(configurationRegistry);
+  const configurationRegistry = getConfigurationRegistry(ProxyState.PROXY_DISABLED, undefined, undefined, undefined);
+  const proxy = new Proxy(configurationRegistry, certificates);
   await proxy.init();
   await fetch(URL);
 });
@@ -70,8 +78,13 @@ test('fetch without proxy', async () => {
 test('fetch with http proxy', async () => {
   const proxyServer = await buildProxy();
   const address = proxyServer.address() as AddressInfo;
-  const configurationRegistry = getConfigurationRegistry(true, `127.0.0.1:${address.port}`, undefined, undefined);
-  const proxy = new Proxy(configurationRegistry);
+  const configurationRegistry = getConfigurationRegistry(
+    ProxyState.PROXY_MANUAL,
+    `127.0.0.1:${address.port}`,
+    undefined,
+    undefined,
+  );
+  const proxy = new Proxy(configurationRegistry, certificates);
   await proxy.init();
   let connectDone = false;
   proxyServer.on('connect', () => (connectDone = true));

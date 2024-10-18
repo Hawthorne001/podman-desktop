@@ -89,6 +89,12 @@ interface MountSettings {
 
 type MountConfig = MountSettings[];
 
+export interface DeviceMapping {
+  CgroupPermissions: string;
+  PathInContainer: string;
+  PathOnHost: string;
+}
+
 export interface HostConfig {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   PortBindings?: any;
@@ -105,6 +111,7 @@ export interface HostConfig {
   ExtraHosts?: string[];
   NetworkMode?: string;
   Mounts?: MountConfig;
+  Devices?: DeviceMapping[];
 }
 
 export interface HealthConfig {
@@ -234,7 +241,7 @@ export interface ContainerCreateOptions {
   EnvFiles?: string[];
   Labels?: { [label: string]: string };
 
-  // eslint-disable-next-line @typescript-eslint/ban-types
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   ExposedPorts?: { [port: string]: {} };
   HostConfig?: HostConfig;
   Image?: string;
@@ -274,6 +281,7 @@ export interface VolumeCreateOptions {
   Name?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface VolumeCreateResponseInfo extends Dockerode.VolumeCreateResponse {}
 
 export interface ContainerExportOptions {

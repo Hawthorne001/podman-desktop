@@ -23,6 +23,7 @@
 import '@testing-library/jest-dom/vitest';
 
 import { render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { beforeAll, expect, test, vi } from 'vitest';
 
 import { context } from '/@/stores/context';
@@ -33,11 +34,8 @@ import { ContextUI } from '../context/context';
 import PreferencesRendering from './PreferencesRendering.svelte';
 
 async function waitRender(customProperties: any): Promise<void> {
-  const result = render(PreferencesRendering, { ...customProperties });
-  // wait that result.component.$$.ctx[0] is set
-  while (result.component.$$.ctx[0] === undefined) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  render(PreferencesRendering, { ...customProperties });
+  await tick();
 }
 
 beforeAll(() => {
@@ -83,6 +81,7 @@ test('Expect to see one record when filtering with unknown keyword', async () =>
   render(PreferencesRendering, { properties: records, key: 'key', searchValue: 'unknwon' });
   const noSettingsDiv = screen.getAllByText('No Settings Found');
   expect(noSettingsDiv.length > 0).toBe(true);
+  expect(noSettingsDiv[0].parentElement).toHaveClass('text-[var(--pd-content-header)]');
 });
 
 test('Expect extension title used a section name', async () => {

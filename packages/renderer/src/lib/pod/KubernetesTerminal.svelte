@@ -1,22 +1,32 @@
 <script lang="ts">
+import { FitAddon } from '@xterm/addon-fit';
+import { SerializeAddon } from '@xterm/addon-serialize';
+import { type IDisposable, Terminal } from '@xterm/xterm';
 import { onDestroy, onMount } from 'svelte';
 import { router } from 'tinro';
-import { type IDisposable, Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
 
-import { getPanelDetailColor } from '/@/lib/color/color';
 import { terminalStates } from '/@/stores/kubernetes-terminal-state-store';
 
 import { TerminalSettings } from '../../../../main/src/plugin/terminal-settings';
+import { getTerminalTheme } from '../../../../main/src/plugin/terminal-theme';
 
 export let podName: string;
 export let containerName: string;
+
+// On load, we collect the the original pod and container name,
+// and we will use these to correctly save the terminal state when the component is destroyed.
+// Due to the way Svelte works, we need to store the original pod and container name in a separate / safe manner so that
+// the original values are not written over when the component is re-rendered.
+let originalPodName = podName;
+let originalContainerName = containerName;
+let terminalContent: string = '';
+let serializeAddon: SerializeAddon;
 
 export let terminalXtermDiv: HTMLElement = document.createElement('div');
 let curRouterPath: string;
 
 interface State {
-  terminal: Terminal;
+  terminal: string;
   id: number;
 }
 
@@ -32,26 +42,23 @@ router.subscribe(route => {
 
 onMount(async () => {
   const savedState = getSavedTerminalState(podName, containerName);
+  await initializeNewTerminal(terminalXtermDiv);
 
-  if (savedState) {
-    shellTerminal = savedState.terminal;
-    id = savedState.id;
-    removeAllChildren(terminalXtermDiv);
-    shellTerminal.open(terminalXtermDiv);
-  } else {
-    await initializeNewTerminal(terminalXtermDiv);
+  // If there is a saved state with information in the terminal, we will write it to the terminal (it was serialized into a string before using the SerializeAddon)
+  // and then add a \r\n to the end of the terminal to ensure the cursor is on a new line.
+  if (savedState?.terminal) {
+    shellTerminal.write(savedState.terminal);
+    shellTerminal.write('\r\n');
+    shellTerminal.focus();
   }
 });
 
 onDestroy(() => {
-  saveTerminalState(podName, containerName, { terminal: shellTerminal, id: id } as State);
+  terminalContent = serializeAddon.serialize();
+  saveTerminalState(originalPodName, originalContainerName, { terminal: terminalContent, id: id } as State);
+  serializeAddon.dispose();
+  shellTerminal.dispose();
 });
-
-function removeAllChildren(element: HTMLElement): void {
-  while (element.firstChild) {
-    element.removeChild(element.firstChild);
-  }
-}
 
 function reconnect() {
   window
@@ -93,9 +100,7 @@ async function initializeNewTerminal(container: HTMLElement) {
     fontSize,
     lineHeight,
     screenReaderMode,
-    theme: {
-      background: getPanelDetailColor(),
-    },
+    theme: getTerminalTheme(),
   });
 
   id = await window.kubernetesExec(
@@ -116,10 +121,10 @@ async function initializeNewTerminal(container: HTMLElement) {
   });
 
   const fitAddon = new FitAddon();
+  serializeAddon = new SerializeAddon();
   shellTerminal.loadAddon(fitAddon);
-  removeAllChildren(container);
+  shellTerminal.loadAddon(serializeAddon);
   shellTerminal.open(container);
-  fitAddon.fit();
 
   window.addEventListener('resize', () => {
     const resizeAsync = async () => {
@@ -133,6 +138,7 @@ async function initializeNewTerminal(container: HTMLElement) {
     };
     resizeAsync().catch(console.error);
   });
+  fitAddon.fit();
 
   await window.kubernetesExecResize(id, shellTerminal.cols, shellTerminal.rows);
 }
@@ -153,4 +159,4 @@ function saveTerminalState(podName: string, containerName: string, state: State)
 }
 </script>
 
-<div class="h-full" bind:this="{terminalXtermDiv}"></div>
+<div class="h-full w-full p-[5px] pr-0 bg-[var(--pd-terminal-background)]" bind:this={terminalXtermDiv}></div>

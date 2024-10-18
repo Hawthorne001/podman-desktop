@@ -1,15 +1,15 @@
 <script lang="ts">
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 
 import { Spinner } from '@podman-desktop/ui-svelte';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
 import { onDestroy, onMount } from 'svelte';
-import { Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
 
 import type { CheckStatus, ProviderInfo } from '/@api/provider-info';
 
 import { TerminalSettings } from '../../../../main/src/plugin/terminal-settings';
-import { getPanelDetailColor } from '../color/color';
+import { getTerminalTheme } from '../../../../main/src/plugin/terminal-theme';
 import Steps from '../ui/Steps.svelte';
 import PreflightChecks from './PreflightChecks.svelte';
 import ProviderCard from './ProviderCard.svelte';
@@ -48,9 +48,7 @@ async function refreshTerminal() {
     fontSize,
     lineHeight,
     disableStdin: true,
-    theme: {
-      background: getPanelDetailColor(),
-    },
+    theme: getTerminalTheme(),
     convertEol: true,
   });
   termFit = new FitAddon();
@@ -86,11 +84,11 @@ onDestroy(() => {
 });
 </script>
 
-<ProviderCard provider="{provider}">
+<ProviderCard provider={provider}>
   <svelte:fragment slot="content">
     <div class="flex flex-col w-full lg:w-2/3 justify-center items-center">
       {#if initializationContext.mode === InitializeAndStartMode}
-        <Steps steps="{InitializationSteps}" />
+        <Steps steps={InitializationSteps} />
       {/if}
       <div class="flex flex-col text-gray-700 items-center" aria-label="Transitioning State">
         <div>Initializing</div>
@@ -101,18 +99,16 @@ onDestroy(() => {
     </div>
 
     <div
-      class=""
-      style="background-color: {getPanelDetailColor()}; width: 100%; text-align: left; display: {initializeError
-        ? 'block'
-        : 'none'}"
-      bind:this="{logsXtermDiv}">
+      class="bg-[var(--pd-terminal-background)] p-[5px] pr-0"
+      style="width: 100%; text-align: left; display: {initializeError ? 'block' : 'none'}"
+      bind:this={logsXtermDiv}>
     </div>
 
-    <PreflightChecks preflightChecks="{preflightChecks}" />
+    <PreflightChecks preflightChecks={preflightChecks} />
   </svelte:fragment>
   <svelte:fragment slot="update">
     {#if provider.updateInfo?.version && provider.version !== provider.updateInfo?.version}
-      <ProviderUpdateButton onPreflightChecks="{checks => (preflightChecks = checks)}" provider="{provider}" />
+      <ProviderUpdateButton onPreflightChecks={checks => (preflightChecks = checks)} provider={provider} />
     {/if}
   </svelte:fragment>
 </ProviderCard>

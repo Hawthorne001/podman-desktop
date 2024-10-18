@@ -35,52 +35,49 @@ const service: ServiceUI = {
 };
 
 test('Expect basic column styling', async () => {
-  render(ServiceColumnType, { object: service });
+  const result = render(ServiceColumnType, { object: JSON.parse(JSON.stringify(service)) });
 
   const text = screen.getByText(service.type);
   expect(text).toBeInTheDocument();
-  expect(text).toHaveClass('text-gray-500');
 
-  const dot = text.parentElement?.children[0].children[0];
+  const dot = text.parentElement?.children[0];
   expect(dot).toBeInTheDocument();
   expect(dot).toHaveClass('text-gray-600');
+  result.unmount();
 });
 
 test('Expect column styling ClusterIP', async () => {
   service.type = 'ClusterIP';
-  render(ServiceColumnType, { object: service });
+  render(ServiceColumnType, { object: JSON.parse(JSON.stringify(service)) });
 
   const text = screen.getByText(service.type);
   expect(text).toBeInTheDocument();
-  expect(text).toHaveClass('text-gray-500');
 
-  const dot = text.parentElement?.children[0].children[0];
+  const dot = text.parentElement?.children[0];
   expect(dot).toBeInTheDocument();
   expect(dot).toHaveClass('text-sky-500');
 });
 
 test('Expect column styling LoadBalancer', async () => {
   service.type = 'LoadBalancer';
-  render(ServiceColumnType, { object: service });
+  render(ServiceColumnType, { object: JSON.parse(JSON.stringify(service)) });
 
   const text = screen.getByText(service.type);
   expect(text).toBeInTheDocument();
-  expect(text).toHaveClass('text-gray-500');
 
-  const dot = text.parentElement?.children[0].children[0];
+  const dot = text.parentElement?.children[0];
   expect(dot).toBeInTheDocument();
   expect(dot).toHaveClass('text-purple-500');
 });
 
 test('Expect column styling NodePort', async () => {
   service.type = 'NodePort';
-  render(ServiceColumnType, { object: service });
+  render(ServiceColumnType, { object: JSON.parse(JSON.stringify(service)) });
 
   const text = screen.getByText(service.type);
   expect(text).toBeInTheDocument();
-  expect(text).toHaveClass('text-gray-500');
 
-  const dot = text.parentElement?.children[0].children[0];
+  const dot = text.parentElement?.children[0];
   expect(dot).toBeInTheDocument();
   expect(dot).toHaveClass('text-fuschia-600');
 });

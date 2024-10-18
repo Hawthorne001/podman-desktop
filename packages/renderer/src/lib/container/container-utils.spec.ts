@@ -23,7 +23,7 @@ import type { ViewInfoUI } from '/@api/view-info';
 
 import { ContextUI } from '../context/context';
 import { ContainerUtils } from './container-utils';
-import { ContainerGroupInfoTypeUI } from './ContainerInfoUI';
+import { ContainerGroupInfoTypeUI, type ContainerGroupInfoUI, type ContainerInfoUI } from './ContainerInfoUI';
 
 let containerUtils: ContainerUtils;
 
@@ -277,6 +277,37 @@ test('check parsing of container info without names', async () => {
   expect(name).toBe('');
 });
 
+test('check that if a container is part of compose, it will use the Names field for output WITHOUT the project name even if there is a name for service', async () => {
+  const containerInfo = {
+    Id: 'container1',
+    Image: 'registry.k8s.io/pause:3.7',
+    Labels: {
+      'com.docker.compose.project': 'compose',
+      'com.docker.compose.service': 'compose_container',
+    },
+    Names: ['/compose-compose_container-1'],
+    State: 'RUNNING',
+  } as unknown as ContainerInfo;
+  const name = containerUtils.getName(containerInfo);
+  expect(name).toBe('compose_container-1');
+});
+
+test('test that if a container is part of compose, and that container_name has been specified, that means that the Names[0] should be used without the project name', async () => {
+  const containerInfo = {
+    Id: 'container1',
+    Image: 'registry.k8s.io/pause:3.7',
+    Labels: {
+      'com.docker.compose.project': 'compose',
+      'com.docker.compose.service': 'container_name',
+    },
+    // If container_name was specified in the compose file, this should be used (without the project name).
+    Names: ['/container_name'],
+    State: 'RUNNING',
+  } as unknown as ContainerInfo;
+  const name = containerUtils.getName(containerInfo);
+  expect(name).toBe('container_name');
+});
+
 test('check parsing of container info without labels', async () => {
   const context = new ContextUI();
   const containerInfo = {
@@ -289,7 +320,7 @@ test('check parsing of container info without labels', async () => {
   containerUtils.adaptContextOnContainer(context, containerInfo);
 });
 
-test('should expect imageHref not to have sha256: prefix', async () => {
+test('should expect imageHref to use image tag', async () => {
   const containerInfo = {
     Id: 'container1',
     Image: 'docker.io/kindest/node:foobar',
@@ -297,22 +328,55 @@ test('should expect imageHref not to have sha256: prefix', async () => {
     State: 'STOPPED',
     ImageID: 'sha256:dummy-sha256',
     engineId: 'dummy-engine-id',
-    ImageBase64RepoTag: 'dummy-base-64',
+    ImageBase64RepoTag: 'ZHVtbXktYmFzZS02NA==', //dummy-base-64
   } as unknown as ContainerInfo;
   const containerUI = containerUtils.getContainerInfoUI(containerInfo);
-  expect(containerUI.imageHref).toBe('/images/dummy-sha256/dummy-engine-id/dummy-base-64/summary');
+  expect(containerUI.imageHref).toBe('/images/sha256:dummy-sha256/dummy-engine-id/ZHVtbXktYmFzZS02NA==/summary');
 });
 
-test('should expect imageHref to use exact image id if no sha256: prefix', async () => {
+test('should expect imageHref to not use image tag', async () => {
   const containerInfo = {
     Id: 'container1',
     Image: 'docker.io/kindest/node:foobar',
     Names: ['container1'],
     State: 'STOPPED',
-    ImageID: 'dummy-sha256',
+    ImageID: 'sha256:dummy-sha256',
     engineId: 'dummy-engine-id',
-    ImageBase64RepoTag: 'dummy-base-64',
+    ImageBase64RepoTag: 'c2hhMjU2OmFiYzEyMw==', //sha256:abc123
   } as unknown as ContainerInfo;
   const containerUI = containerUtils.getContainerInfoUI(containerInfo);
-  expect(containerUI.imageHref).toBe('/images/dummy-sha256/dummy-engine-id/dummy-base-64/summary');
+  expect(containerUI.imageHref).toBe('/images/sha256:dummy-sha256/dummy-engine-id');
+});
+
+test('should expect imageHref to not use image tag when there is no tag', async () => {
+  const containerInfo = {
+    Id: 'container1',
+    Image: 'docker.io/kindest/node:foobar',
+    Names: ['container1'],
+    State: 'STOPPED',
+    ImageID: 'sha256:dummy-sha256',
+    engineId: 'dummy-engine-id',
+  } as unknown as ContainerInfo;
+  const containerUI = containerUtils.getContainerInfoUI(containerInfo);
+  expect(containerUI.imageHref).toBe('/images/sha256:dummy-sha256/dummy-engine-id');
+});
+
+test('should be able to identify container groups', async () => {
+  const containerGroupInfo = {
+    id: 'my-pod',
+    name: 'My pod',
+    type: ContainerGroupInfoTypeUI.POD,
+  } as unknown as ContainerGroupInfoUI;
+  expect(containerUtils.isContainerGroupInfoUI(containerGroupInfo)).toBe(true);
+  expect(containerUtils.isContainerInfoUI(containerGroupInfo)).toBe(false);
+});
+
+test('should be able to identify containers', async () => {
+  const containerInfo = {
+    id: 'container1',
+    name: 'a container',
+    state: 'RUNNING',
+  } as unknown as ContainerInfoUI;
+  expect(containerUtils.isContainerInfoUI(containerInfo)).toBe(true);
+  expect(containerUtils.isContainerGroupInfoUI(containerInfo)).toBe(false);
 });

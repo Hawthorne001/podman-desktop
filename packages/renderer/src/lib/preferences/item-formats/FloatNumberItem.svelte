@@ -12,7 +12,7 @@ export let onChange = (_id: string, _value: number) => {};
 export let invalidRecord = (_error: string) => {};
 
 let recordValue: string;
-$: recordValue = value?.toString() || '0';
+$: recordValue = value?.toString() ?? '0';
 
 let numberInputErrorMessage = '';
 let numberInputInvalid = false;
@@ -62,32 +62,23 @@ function onNumberInputKeyPress(event: any) {
 function assertNumericValueIsValid(value: number): boolean {
   const numericValue = checkNumericValueValid(record, value);
   numberInputInvalid = !numericValue.valid;
-  numberInputErrorMessage = numericValue.error || '';
+  numberInputErrorMessage = numericValue.error ?? '';
   return numericValue.valid;
 }
 </script>
 
 <div
   class="flex flex-row rounded-sm bg-zinc-700 text-sm divide-x divide-charcoal-800 w-24 border-b"
-  class:border-violet-500="{!numberInputInvalid}"
-  class:border-red-500="{numberInputInvalid}">
-  <Tooltip topRight>
-    <svelte:fragment slot="content">
-      <input
-        type="text"
-        class="w-full px-2 outline-none focus:outline-none text-white text-sm py-0.5"
-        name="{record.id}"
-        bind:value="{recordValue}"
-        on:keypress="{event => onNumberInputKeyPress(event)}"
-        on:input="{onInput}"
-        aria-label="{record.description}" />
-    </svelte:fragment>
-    <svelte:fragment slot="tip">
-      {#if numberInputErrorMessage}
-        <div class="inline-block py-2 px-4 rounded-md bg-charcoal-800 text-xs text-white" aria-label="tooltip">
-          {numberInputErrorMessage}
-        </div>
-      {/if}
-    </svelte:fragment>
+  class:border-violet-500={!numberInputInvalid}
+  class:border-red-500={numberInputInvalid}>
+  <Tooltip topRight tip={numberInputErrorMessage}>
+    <input
+      type="text"
+      class="w-full px-2 outline-none focus:outline-none text-white text-sm py-0.5"
+      name={record.id}
+      bind:value={recordValue}
+      on:keypress={event => onNumberInputKeyPress(event)}
+      on:input={onInput}
+      aria-label={record.description} />
   </Tooltip>
 </div>

@@ -19,6 +19,7 @@
 import * as crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -50,7 +51,7 @@ import type { ContainerStatsInfo } from '/@api/container-stats-info.js';
 import type { HistoryInfo } from '/@api/history-info.js';
 import type { BuildImageOptions, ImageInfo, ListImagesOptions, PodmanListImagesOptions } from '/@api/image-info.js';
 import type { ImageInspectInfo } from '/@api/image-inspect-info.js';
-import type { ManifestCreateOptions, ManifestInspectInfo } from '/@api/manifest-info.js';
+import type { ManifestCreateOptions, ManifestInspectInfo, ManifestPushOptions } from '/@api/manifest-info.js';
 import type { NetworkInspectInfo } from '/@api/network-info.js';
 import type { ProviderContainerConnectionInfo } from '/@api/provider-info.js';
 import type { PullEvent } from '/@api/pull-event.js';
@@ -317,16 +318,14 @@ export class ContainerProviderRegistry {
     let previousStatus = containerProviderConnection.status();
 
     providerRegistry.onBeforeDidUpdateContainerConnection(event => {
-      if (event.providerId === provider.id && event.connection.name === containerProviderConnection.name) {
-        const newStatus = event.status;
-        if (newStatus === 'stopped') {
-          internalProvider.api = undefined;
-          internalProvider.libpodApi = undefined;
-          this.apiSender.send('provider-change', {});
-        }
-        if (newStatus === 'started') {
-          this.setupConnectionAPI(internalProvider, containerProviderConnection);
-        }
+      if (
+        event.providerId === provider.id &&
+        event.connection.name === containerProviderConnection.name &&
+        event.status === 'stopped'
+      ) {
+        internalProvider.api = undefined;
+        internalProvider.libpodApi = undefined;
+        this.apiSender.send('provider-change', {});
       }
       previousStatus = event.status;
     });
@@ -338,18 +337,15 @@ export class ContainerProviderRegistry {
     // track the status of the provider
     const timer = setInterval(() => {
       const newStatus = containerProviderConnection.status();
-      if (newStatus !== previousStatus) {
-        if (newStatus === 'stopped') {
-          internalProvider.api = undefined;
-          internalProvider.libpodApi = undefined;
-          this.apiSender.send('provider-change', {});
-        }
-        if (newStatus === 'started') {
-          this.setupConnectionAPI(internalProvider, containerProviderConnection);
-          this.internalProviders.set(id, internalProvider);
-        }
-        previousStatus = newStatus;
+      if (newStatus === 'started' && !internalProvider.api) {
+        this.setupConnectionAPI(internalProvider, containerProviderConnection);
+        this.internalProviders.set(id, internalProvider);
+      } else if (newStatus !== previousStatus && newStatus === 'stopped') {
+        internalProvider.api = undefined;
+        internalProvider.libpodApi = undefined;
+        this.apiSender.send('provider-change', {});
       }
+      previousStatus = newStatus;
     }, 2000);
 
     this.internalProviders.set(id, internalProvider);
@@ -396,10 +392,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedContainers = containers.flat();
-    this.telemetryService.track(
-      'listSimpleContainers',
-      Object.assign({ total: flattenedContainers.length }, telemetryOptions),
-    );
+    this.telemetryService.track('listSimpleContainers', { total: flattenedContainers.length, ...telemetryOptions });
 
     return flattenedContainers;
   }
@@ -457,7 +450,9 @@ export class ContainerProviderRegistry {
               if (podmanContainer.Labels) {
                 // copy all labels
                 for (const label of Object.keys(podmanContainer.Labels)) {
-                  Labels[label] = podmanContainer.Labels[label];
+                  if (podmanContainer.Labels[label]) {
+                    Labels[label] = podmanContainer.Labels[label];
+                  }
                 }
               }
 
@@ -541,7 +536,7 @@ export class ContainerProviderRegistry {
                 engineName: provider.name,
                 engineId: provider.id,
                 engineType: provider.connection.type,
-                StartedAt: container.StartedAt || '',
+                StartedAt: container.StartedAt ?? '',
                 Status: container.Status,
                 ImageBase64RepoTag: Buffer.from(container.Image, 'binary').toString('base64'),
               };
@@ -556,10 +551,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedContainers = containers.flat();
-    this.telemetryService.track(
-      'listContainers',
-      Object.assign({ total: flattenedContainers.length }, telemetryOptions),
-    );
+    this.telemetryService.track('listContainers', { total: flattenedContainers.length, ...telemetryOptions });
 
     return flattenedContainers;
   }
@@ -598,7 +590,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedImages = images.flat();
-    this.telemetryService.track('listImages', Object.assign({ total: flattenedImages.length }, telemetryOptions));
+    this.telemetryService.track('listImages', { total: flattenedImages.length, ...telemetryOptions });
 
     return flattenedImages;
   }
@@ -637,28 +629,43 @@ export class ContainerProviderRegistry {
           return fetchedImages;
         }
 
-        // Transform fetched images to include engine name and ID
-        return fetchedImages.map(image => ({
-          ...image,
-          engineName: provider.name,
-          engineId: provider.id,
-          // Using guessIsManifest, determine if the image is a manifest and set isManifest accordingly
-          // NOTE: This is a workaround until we have a better way to determine if an image is a manifest
-          // and may result in false positives until issue: https://github.com/containers/podman/issues/22184 is resolved
-          isManifest: guessIsManifest(image, provider.connection.type),
+        return Promise.all(
+          Array.from(fetchedImages).map(async image => {
+            // If image.isManifestList is NOT undefined (5.0.2+), we can use it to determine if the image is a manifest
+            // rather than guessing
+            const isManifest = image.isManifestList ?? guessIsManifest(image, provider.connection.type);
 
-          // Podman Id does not include the sha256 prefix, so we add it here (it's the Digest using Podman API)
-          Id: image.Digest ? `sha256:${image.Id}` : image.Id,
+            // Return the base image with the engineName and engineId as well as our isManifest parameter.
+            const baseImage = {
+              ...image,
+              engineName: provider.name,
+              engineId: provider.id,
+              isManifest,
+              Id: image.Digest ? `sha256:${image.Id}` : image.Id,
+              Digest: image.Digest || `sha256:${image.Id}`,
+            };
 
-          // Compat API provider does not add the Digest field.
-          // if it is missing, add it as 'sha256:image.Id'
-          Digest: image.Digest || `sha256:${image.Id}`,
-        }));
+            // If the image is a manifest, inspect the manifest to get the digests of the images part of the manifest
+            // however, we do not **ever** want this to block the UI / operation, so if this fails, output to console and continue
+            if (baseImage.isManifest && provider.libpodApi) {
+              try {
+                const manifestInspectInfo = await provider.libpodApi.podmanInspectManifest(image.Id);
+                if (manifestInspectInfo?.manifests) {
+                  baseImage.manifests = manifestInspectInfo.manifests;
+                }
+              } catch (error) {
+                console.error('Error while inspecting manifest', error);
+              }
+            }
+
+            return baseImage;
+          }),
+        );
       }),
     );
 
     const flattenedImages = images.flat();
-    this.telemetryService.track('podmanListImages', Object.assign({ total: flattenedImages.length }, telemetryOptions));
+    this.telemetryService.track('podmanListImages', { total: flattenedImages.length, ...telemetryOptions });
 
     return flattenedImages;
   }
@@ -711,7 +718,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedPods = pods.flat();
-    this.telemetryService.track('listPods', Object.assign({ total: flattenedPods.length }, telemetryOptions));
+    this.telemetryService.track('listPods', { total: flattenedPods.length, ...telemetryOptions });
 
     return flattenedPods;
   }
@@ -742,7 +749,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedNetworks = networks.flat();
-    this.telemetryService.track('listNetworks', Object.assign({ total: flattenedNetworks.length }, telemetryOptions));
+    this.telemetryService.track('listNetworks', { total: flattenedNetworks.length, ...telemetryOptions });
 
     return flattenedNetworks;
   }
@@ -834,7 +841,7 @@ export class ContainerProviderRegistry {
       }),
     );
     const flattenedVolumes: VolumeListInfo[] = volumes.flat();
-    this.telemetryService.track('listVolumes', Object.assign({ total: flattenedVolumes.length }, telemetryOptions));
+    this.telemetryService.track('listVolumes', { total: flattenedVolumes.length, ...telemetryOptions });
 
     return flattenedVolumes;
   }
@@ -959,7 +966,7 @@ export class ContainerProviderRegistry {
     });
 
     const matchingConnection = matchingContainerProviders[0];
-    if (!matchingConnection[1].api) {
+    if (!matchingConnection?.[1].api) {
       throw new Error('No provider with a running engine');
     }
 
@@ -1059,7 +1066,7 @@ export class ContainerProviderRegistry {
 
   getImageName(inspectInfo: Dockerode.ImageInspectInfo): string {
     const tags = inspectInfo.RepoTags;
-    if (!tags) {
+    if (!tags?.[0]) {
       throw new Error('Cannot push an image without a tag');
     }
     // take the first tag
@@ -1076,10 +1083,7 @@ export class ContainerProviderRegistry {
       telemetryOptions = { error: error };
       throw error;
     } finally {
-      this.telemetryService.track(
-        'tagImage',
-        Object.assign({ imageName: this.getImageHash(imageTag) }, telemetryOptions),
-      );
+      this.telemetryService.track('tagImage', { imageName: this.getImageHash(imageTag), ...telemetryOptions });
     }
   }
 
@@ -1094,7 +1098,7 @@ export class ContainerProviderRegistry {
     try {
       const engine = this.getMatchingEngine(engineId);
       const image = engine.getImage(imageTag);
-      const authconfig = authInfo || this.imageRegistry.getAuthconfigForImage(imageTag);
+      const authconfig = authInfo ?? this.imageRegistry.getAuthconfigForImage(imageTag);
       const pushStream = await image.push({
         authconfig,
         abortSignal: abortController?.signal,
@@ -1115,10 +1119,7 @@ export class ContainerProviderRegistry {
       telemetryOptions = { error: error };
       throw error;
     } finally {
-      this.telemetryService.track(
-        'pushImage',
-        Object.assign({ imageName: this.getImageHash(imageTag) }, telemetryOptions),
-      );
+      this.telemetryService.track('pushImage', { imageName: this.getImageHash(imageTag), ...telemetryOptions });
     }
   }
 
@@ -1136,7 +1137,6 @@ export class ContainerProviderRegistry {
         authconfig,
         abortSignal: abortController?.signal,
       });
-      // eslint-disable-next-line @typescript-eslint/ban-types
       let resolve: () => void;
       let reject: (err: Error) => void;
       const promise = new Promise<void>((res, rej) => {
@@ -1144,7 +1144,6 @@ export class ContainerProviderRegistry {
         reject = rej;
       });
 
-      // eslint-disable-next-line @typescript-eslint/ban-types
       const onFinished = (err: Error | null): void => {
         if (err) {
           return reject(err);
@@ -1172,10 +1171,7 @@ export class ContainerProviderRegistry {
       telemetryOptions = { error: error };
       throw error;
     } finally {
-      this.telemetryService.track(
-        'pullImage',
-        Object.assign({ imageName: this.getImageHash(imageName) }, telemetryOptions),
-      );
+      this.telemetryService.track('pullImage', { imageName: this.getImageHash(imageName), ...telemetryOptions });
     }
   }
 
@@ -1327,6 +1323,39 @@ export class ContainerProviderRegistry {
     }
   }
 
+  async pushManifest(manifestOptions: ManifestPushOptions): Promise<void> {
+    let telemetryOptions = {};
+    try {
+      let internalContainerProvider: InternalContainerProvider;
+      if (manifestOptions.provider) {
+        // grab connection
+        internalContainerProvider = this.getMatchingContainerProvider(manifestOptions.provider);
+      } else {
+        // Get the first running podman connection
+        internalContainerProvider = this.getFirstRunningPodmanContainerProvider();
+      }
+
+      // Check if the found provider does not support the libpod API
+      if (!internalContainerProvider?.libpodApi) {
+        throw new Error('The matching provider does not support the Podman API');
+      }
+
+      // When pushing, we need to retrieve the authentication information from the registry.
+      const authconfig = this.imageRegistry.getAuthconfigForImage(manifestOptions.name);
+
+      // Always do all=true for manifests, or else it will not push any of the images
+      // There is a bug where if false, it will return 'manifest blob unknown'.
+      manifestOptions.all = true;
+
+      return await internalContainerProvider.libpodApi.podmanPushManifest(manifestOptions, authconfig);
+    } catch (error) {
+      telemetryOptions = { error: error };
+      throw error;
+    } finally {
+      this.telemetryService.track('pushManifest', telemetryOptions);
+    }
+  }
+
   async inspectManifest(engineId: string, manifestId: string): Promise<ManifestInspectInfo> {
     let telemetryOptions = {};
     try {
@@ -1343,6 +1372,33 @@ export class ContainerProviderRegistry {
     }
   }
 
+  async removeManifest(engineId: string, manifestName: string): Promise<void> {
+    let telemetryOptions = {};
+    try {
+      const libPod = this.getMatchingPodmanEngineLibPod(engineId);
+      if (!libPod) {
+        throw new Error('No podman provider with a running engine');
+      }
+      return libPod.podmanRemoveManifest(manifestName);
+    } catch (error) {
+      telemetryOptions = { error: error };
+      throw error;
+    } finally {
+      this.telemetryService.track('removeManifest', telemetryOptions);
+    }
+  }
+
+  protected extractContainerEnvironment(container: ContainerInspectInfo): { [key: string]: string } {
+    return container.Config.Env.reduce((acc: { [key: string]: string }, env) => {
+      // should handle multiple values after the = sign
+      const [key, ...values] = env.split('=');
+      if (key) {
+        acc[key] = values.join('=');
+      }
+      return acc;
+    }, {});
+  }
+
   async replicatePodmanContainer(
     source: { engineId: string; id: string },
     target: { engineId: string },
@@ -1357,20 +1413,10 @@ export class ContainerProviderRegistry {
       const containerToReplicate = await this.getContainerInspect(source.engineId, source.id);
 
       // convert env from array of string to an object with key being the env name
-      const updatedEnv = containerToReplicate.Config.Env.reduce((acc: { [key: string]: string }, env) => {
-        const [key, value] = env.split('=');
-        acc[key] = value;
-        return acc;
-      }, {});
+      const updatedEnv = this.extractContainerEnvironment(containerToReplicate);
 
       // build create container configuration
-      const originalConfiguration = {
-        command: containerToReplicate.Config.Cmd,
-        entrypoint: containerToReplicate.Config.Entrypoint,
-        env: updatedEnv,
-        image: containerToReplicate.Config.Image,
-        mounts: containerToReplicate.Mounts,
-      };
+      const originalConfiguration = this.getCreateContainsOptionsFromOriginal(containerToReplicate, updatedEnv);
 
       // add extra information
       const configuration: ContainerCreateOptions = {
@@ -1384,6 +1430,30 @@ export class ContainerProviderRegistry {
     } finally {
       this.telemetryService.track('replicatePodmanContainer', telemetryOptions);
     }
+  }
+
+  /**
+   * @see https://github.com/containers/podman/issues/23337#issuecomment-2238704510
+   * @param containerToReplicate
+   * @param updatedEnv
+   * @private
+   */
+  private getCreateContainsOptionsFromOriginal(
+    containerToReplicate: ContainerInspectInfo,
+    updatedEnv: { [p: string]: string },
+  ): Record<string, unknown> {
+    return {
+      command: containerToReplicate.Config.Cmd,
+      entrypoint: containerToReplicate.Config.Entrypoint,
+      env: updatedEnv,
+      image: containerToReplicate.Config.Image,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mounts: containerToReplicate.Mounts.filter(mount => (mount as any).Type !== 'volume'),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      volumes: containerToReplicate.Mounts.filter(mount => (mount as any).Type === 'volume').map(mount => {
+        return { Name: mount.Name, Dest: mount.Destination };
+      }),
+    };
   }
 
   async stopPod(engineId: string, podId: string): Promise<void> {
@@ -1687,7 +1757,6 @@ export class ContainerProviderRegistry {
     onError: (error: string) => void,
     onEnd: () => void,
   ): Promise<{ write: (param: string) => void; resize: (w: number, h: number) => void }> {
-    let telemetryOptions = {};
     try {
       const exec = await this.getMatchingContainer(engineId, id).exec({
         AttachStdin: true,
@@ -1731,10 +1800,8 @@ export class ContainerProviderRegistry {
         },
       };
     } catch (error) {
-      telemetryOptions = { error: error };
+      this.telemetryService.track('shellInContainer.error', error);
       throw error;
-    } finally {
-      this.telemetryService.track('shellInContainer', telemetryOptions);
     }
   }
 
@@ -1867,7 +1934,7 @@ export class ContainerProviderRegistry {
     }
   }
 
-  async createContainer(engineId: string, options: ContainerCreateOptions): Promise<{ id: string }> {
+  async createContainer(engineId: string, options: ContainerCreateOptions): Promise<{ id: string; engineId: string }> {
     let telemetryOptions = {};
     try {
       let container: Dockerode.Container;
@@ -1878,13 +1945,11 @@ export class ContainerProviderRegistry {
       }
 
       const engine = this.internalProviders.get(engineId);
-      if (engine) {
+      if (engine && (options.start === true || options.start === undefined)) {
+        await container.start();
         await this.attachToContainer(engine, container, options.Tty, options.OpenStdin);
-        if (options.start === true || options.start === undefined) {
-          await container.start();
-        }
       }
-      return { id: container.id };
+      return { id: container.id, engineId };
     } catch (error) {
       telemetryOptions = { error: error };
       throw error;
@@ -1911,7 +1976,7 @@ export class ContainerProviderRegistry {
       const envFiles = options.EnvFiles || [];
       const envFileContent = await this.getEnvFileParser().parseEnvFiles(envFiles);
 
-      const env = options.Env || [];
+      const env = options.Env ?? [];
       env.push(...envFileContent);
       options.Env = env;
       // remove EnvFiles from options
@@ -1931,7 +1996,9 @@ export class ContainerProviderRegistry {
     // convert env from array of string to an object with key being the env name
     const updatedEnv = options.Env?.reduce((acc: { [key: string]: string }, env) => {
       const [key, value] = env.split('=');
-      acc[key] = value;
+      if (key && value) {
+        acc[key] = value;
+      }
       return acc;
     }, {});
 
@@ -1998,7 +2065,7 @@ export class ContainerProviderRegistry {
         if (hostItems.length !== 2) {
           continue;
         }
-        dns_server.push(hostItems[1].split('.').map(v => parseInt(v)));
+        dns_server.push((hostItems[1]?.split('.') ?? []).map(v => parseInt(v)));
       }
     }
 
@@ -2044,7 +2111,7 @@ export class ContainerProviderRegistry {
     const options = ['rbind'];
     let propagation = 'rprivate';
     if (bindItems.length === 3) {
-      const flags = bindItems[2].split(',');
+      const flags = bindItems[2]?.split(',') ?? [];
       for (const flag of flags) {
         switch (flag) {
           case 'Z':
@@ -2061,6 +2128,10 @@ export class ContainerProviderRegistry {
             break;
         }
       }
+    }
+
+    if (bindItems[0] === undefined || bindItems[1] === undefined) {
+      return undefined;
     }
 
     return {
@@ -2144,7 +2215,6 @@ export class ContainerProviderRegistry {
   }
 
   async getContainerInspect(engineId: string, id: string): Promise<ContainerInspectInfo> {
-    let telemetryOptions = {};
     try {
       // need to find the container engine of the container
       const provider = this.internalProviders.get(engineId);
@@ -2163,14 +2233,17 @@ export class ContainerProviderRegistry {
         ...containerInspect,
       };
     } catch (error) {
-      telemetryOptions = { error: error };
+      this.telemetryService.track('containerInspect.error', error);
       throw error;
-    } finally {
-      this.telemetryService.track('containerInspect', telemetryOptions);
     }
   }
 
-  async saveImage(engineId: string, id: string, filename: string): Promise<void> {
+  async saveImage(
+    engineId: string,
+    id: string,
+    filename: string,
+    token?: containerDesktopAPI.CancellationToken,
+  ): Promise<void> {
     let telemetryOptions = {};
     try {
       // need to find the container engine of the container
@@ -2184,8 +2257,27 @@ export class ContainerProviderRegistry {
 
       const imageObject = provider.api.getImage(id);
       if (imageObject) {
-        const imageStream = await imageObject.get();
-        return pipeline(imageStream, fs.createWriteStream(filename));
+        // make the download of image cancellable
+        const getImageObjectPromise = imageObject.get();
+        const cancelPromise = new Promise<NodeJS.ReadableStream>((_, reject) => {
+          token?.onCancellationRequested(() => {
+            reject(new Error('saveImage operation canceled'));
+          });
+        });
+        const imageStream = await Promise.race<NodeJS.ReadableStream>([getImageObjectPromise, cancelPromise]);
+
+        // make the saving on filesystem cancellable
+        const ac = new AbortController();
+        const signal = ac.signal;
+        token?.onCancellationRequested(() => {
+          ac.abort();
+        });
+        try {
+          return await pipeline(imageStream, fs.createWriteStream(filename), { signal });
+        } catch (err: unknown) {
+          await rm(filename, { force: true });
+          throw err;
+        }
       }
     } catch (error) {
       telemetryOptions = { error: error };
@@ -2392,7 +2484,7 @@ export class ContainerProviderRegistry {
         throw error;
       }
       eventCollect('stream', `Building ${options?.tag}...\r\n`);
-      // eslint-disable-next-line @typescript-eslint/ban-types
+      // eslint-disable-next-line @typescript-eslint/no-empty-object-type
       let resolve: (output: {}) => void;
       let reject: (err: Error) => void;
       const promise = new Promise((res, rej) => {
@@ -2400,7 +2492,7 @@ export class ContainerProviderRegistry {
         reject = rej;
       });
 
-      // eslint-disable-next-line @typescript-eslint/ban-types
+      // eslint-disable-next-line @typescript-eslint/no-empty-object-type
       const onFinished = (err: Error | null, output: {}): void => {
         if (err) {
           eventCollect('finish', err.message);
@@ -2621,6 +2713,19 @@ export class ContainerProviderRegistry {
 
     if (errors !== '') {
       return Promise.reject(errors);
+    }
+  }
+
+  async resolveShortnameImage(
+    providerContainerConnectionInfo: ProviderContainerConnectionInfo,
+    shortName: string,
+  ): Promise<string[]> {
+    const provider = this.getMatchingContainerProvider(providerContainerConnectionInfo);
+    if (provider.libpodApi) {
+      const response = await provider.libpodApi.resolveShortnameImage(shortName);
+      return response.Names[0] ? response.Names : [shortName];
+    } else {
+      return [shortName];
     }
   }
 }

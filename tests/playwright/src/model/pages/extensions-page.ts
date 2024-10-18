@@ -21,33 +21,34 @@ import { expect as playExpect } from '@playwright/test';
 
 import { ExtensionCardPage } from './extension-card-page';
 import type { ExtensionDetailsPage } from './extension-details-page';
-import { MainPage } from './main-page';
 
-export class ExtensionsPage extends MainPage {
+export class ExtensionsPage {
+  readonly page: Page;
   readonly heading: Locator;
   readonly header: Locator;
   readonly content: Locator;
   readonly additionalActions: Locator;
   readonly installedTab: Locator;
   readonly catalogTab: Locator;
+  readonly installExtensionFromOCIImageButton: Locator;
 
   constructor(page: Page) {
-    super(page, 'extensions');
-    this.header = page.getByRole('region', { name: 'Header' });
-    this.content = page.getByRole('region', { name: 'Content' });
-    this.heading = this.header.getByLabel('Title').getByText('Extensions');
+    this.page = page;
+    this.header = page.getByRole('region', { name: 'header' });
+    this.content = page.getByRole('region', { name: 'content' });
+    this.heading = this.header.getByLabel('Title').getByText('extensions');
     this.additionalActions = this.header.getByRole('group', { name: 'additionalActions' });
     this.installedTab = this.page.getByRole('button', { name: 'Installed' });
     this.catalogTab = this.page.getByRole('button', { name: 'Catalog' });
+    this.installExtensionFromOCIImageButton = this.additionalActions.getByLabel('Install custom');
   }
 
   public async installExtensionFromOCIImage(extension: string): Promise<ExtensionsPage> {
     // open button to install extension from OCI image
-    const instalButton = this.getInstallManuallyButton();
-    await playExpect(instalButton).toBeEnabled();
-    await instalButton.click();
+    await playExpect(this.installExtensionFromOCIImageButton).toBeEnabled();
+    await this.installExtensionFromOCIImageButton.click();
 
-    const dialog = this.page.getByRole('dialog', { name: 'Install Extension from OCI image' });
+    const dialog = this.page.getByRole('dialog', { name: 'Install Custom Extension', exact: true });
     await playExpect(dialog).toBeVisible();
     const imageInput = dialog.getByRole('textbox', { name: 'Image name to install custom extension' });
     // check visibility of the input
@@ -75,13 +76,9 @@ export class ExtensionsPage extends MainPage {
     await this.catalogTab.click();
   }
 
-  public getInstallManuallyButton(): Locator {
-    return this.additionalActions.getByRole('button', { name: 'Install custom...', exact: true });
-  }
-
-  public async openExtensionDetails(name: string, label: string): Promise<ExtensionDetailsPage> {
+  public async openExtensionDetails(name: string, label: string, heading: string): Promise<ExtensionDetailsPage> {
     const extensionCard = await this.getInstalledExtension(name, label);
-    return await extensionCard.openExtensionDetails();
+    return await extensionCard.openExtensionDetails(heading);
   }
 
   public async getInstalledExtension(name: string, label: string): Promise<ExtensionCardPage> {

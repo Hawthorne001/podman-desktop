@@ -16,12 +16,15 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import type { ElectronApplication, JSHandle, Page } from '@playwright/test';
-import { _electron as electron } from '@playwright/test';
+import { _electron as electron, test } from '@playwright/test';
 import type { BrowserWindow } from 'electron';
+
+import { waitWhile } from '../utility/wait';
+import { RunnerOptions } from './runner-options';
 
 type WindowState = {
   isVisible: boolean;
@@ -29,7 +32,7 @@ type WindowState = {
   isCrashed: boolean;
 };
 
-export class PodmanDesktopRunner {
+export class Runner {
   private _options: object;
   private _running: boolean;
   private _app: ElectronApplication | undefined;
@@ -38,22 +41,33 @@ export class PodmanDesktopRunner {
   private readonly _customFolder;
   private readonly _testOutput: string;
   private _videoAndTraceName: string | undefined;
-  private _autoUpdate: boolean;
-  private _autoCheckUpdate: boolean;
+  private _runnerOptions: RunnerOptions;
 
-  constructor({
-    profile = '',
-    customFolder = 'podman-desktop',
-    autoUpdate = true,
-    autoCheckUpdate = true,
-  }: { profile?: string; customFolder?: string; autoUpdate?: boolean; autoCheckUpdate?: boolean } = {}) {
+  private static _instance: Runner | undefined;
+
+  static async getInstance({
+    runnerOptions = new RunnerOptions(),
+  }: {
+    runnerOptions?: RunnerOptions;
+  } = {}): Promise<Runner> {
+    if (!Runner._instance) {
+      Runner._instance = new Runner({ runnerOptions });
+      await Runner._instance.start();
+    }
+    return Runner._instance;
+  }
+
+  private constructor({
+    runnerOptions = new RunnerOptions(),
+  }: {
+    runnerOptions?: RunnerOptions;
+  } = {}) {
     this._running = false;
-    this._profile = profile;
-    this._testOutput = join('tests', 'output', this._profile);
-    this._customFolder = join(this._testOutput, customFolder);
+    this._runnerOptions = runnerOptions;
+    this._profile = this._runnerOptions._profile;
+    this._testOutput = join(this._runnerOptions._customOutputFolder, this._profile);
+    this._customFolder = join(this._testOutput, this._runnerOptions._customFolder);
     this._videoAndTraceName = undefined;
-    this._autoUpdate = autoUpdate;
-    this._autoCheckUpdate = autoCheckUpdate;
 
     // Options setting always needs to be last action in constructor in order to apply settings correctly
     this._options = this.defaultOptions();
@@ -61,7 +75,8 @@ export class PodmanDesktopRunner {
 
   public async start(): Promise<Page> {
     if (this.isRunning()) {
-      throw Error('Podman Desktop is already running');
+      console.log('Podman Desktop is already running');
+      return this.getPage();
     }
 
     try {
@@ -80,7 +95,8 @@ export class PodmanDesktopRunner {
       const exe = this.getElectronApp().evaluate(async ({ app }) => {
         return app.getPath('exe');
       });
-      console.log(`The Executable Electron app. file: ${exe}`);
+      const filePath = await exe;
+      console.log(`The Executable Electron app. file: ${filePath}`);
 
       // Evaluate that the main window is visible
       // at the same time, the function also makes sure that event 'ready-to-show' was triggered
@@ -131,7 +147,7 @@ export class PodmanDesktopRunner {
   }
 
   public async startTracing(): Promise<void> {
-    await this.getPage().context().tracing.start({ screenshots: true, snapshots: true });
+    await this.getPage().context().tracing.start({ screenshots: true, snapshots: true, sources: true });
   }
 
   public async stopTracing(): Promise<void> {
@@ -145,9 +161,7 @@ export class PodmanDesktopRunner {
   }
 
   public async getBrowserWindowState(): Promise<WindowState> {
-    return await (
-      await this.getBrowserWindow()
-    ).evaluate((mainWindow): Promise<WindowState> => {
+    return await (await this.getBrowserWindow()).evaluate((mainWindow): Promise<WindowState> => {
       const getState = (): { isVisible: boolean; isDevToolsOpened: boolean; isCrashed: boolean } => {
         return {
           isVisible: mainWindow.isVisible(),
@@ -175,6 +189,7 @@ export class PodmanDesktopRunner {
     const video = this.getPage().video();
     if (video) {
       await video.saveAs(path);
+      await video.delete();
     } else {
       console.log(`Video file associated was not found`);
     }
@@ -189,9 +204,29 @@ export class PodmanDesktopRunner {
     }
 
     if (this.getElectronApp()) {
-      const elapsed = await this.trackTime(async () => await this.getElectronApp().close());
-      console.log(`Elapsed time of closing the electron app: ${elapsed} ms`);
+      const pid = this.getElectronApp()?.process()?.pid;
+      const timeout = 30000;
+      console.log(`Closing Podman Desktop with a timeout of ${timeout} ms`);
+      try {
+        await Promise.race([
+          waitWhile(async () => this.isRunning(), { timeout: timeout, diff: 100 }),
+          this.getElectronApp().close(),
+        ]);
+      } catch (err: unknown) {
+        console.log(`Caught exception in closing: ${err}`);
+        console.log(`Trying to kill the electron app process`);
+        if (pid) {
+          console.log(`Killing the electron app process with PID: ${pid}`);
+          try {
+            process.kill(pid as number);
+          } catch (error: unknown) {
+            console.log(`Exception thrown when killing the process: ${error}`);
+          }
+        }
+      }
     }
+    this._running = false;
+    Runner._instance = undefined;
 
     if (this._videoAndTraceName) {
       const videoPath = join(this._testOutput, 'videos', `${this._videoAndTraceName}.webm`);
@@ -199,7 +234,41 @@ export class PodmanDesktopRunner {
       console.log(`Saving a video file took: ${elapsed} ms`);
       console.log(`Video file saved as: ${videoPath}`);
     }
-    this._running = false;
+    await this.removeTracesOnFinished();
+  }
+
+  async removeTracesOnFinished(): Promise<void> {
+    const rawTracesPath = join(this._testOutput, 'traces', 'raw');
+
+    if (existsSync(rawTracesPath)) {
+      console.log(`Removing raw traces folder: ${rawTracesPath}`);
+      rmSync(rawTracesPath, { recursive: true, force: true, maxRetries: 5 });
+    }
+
+    try {
+      const testStatus = test.info().status;
+      console.log(`Test finished with status:${testStatus}`);
+      if (testStatus !== 'passed' && testStatus !== 'skipped') return;
+    } catch (err) {
+      console.log(`Caught exception in removing traces: ${err}`);
+      return;
+    }
+
+    if (!process.env.KEEP_TRACES_ON_PASS) {
+      const tracesPath = join(this._testOutput, 'traces', `${this._videoAndTraceName}_trace.zip`);
+      if (existsSync(tracesPath)) {
+        console.log(`Removing traces folder: ${tracesPath}`);
+        rmSync(tracesPath, { recursive: true, force: true, maxRetries: 5 });
+      }
+    }
+
+    if (!process.env.KEEP_VIDEOS_ON_PASS) {
+      const videoPath = join(this._testOutput, 'videos', `${this._videoAndTraceName}.webm`);
+      if (existsSync(videoPath)) {
+        console.log(`Removing video folder: ${videoPath}`);
+        rmSync(videoPath, { recursive: true, force: true, maxRetries: 5 });
+      }
+    }
   }
 
   protected async trackTime(fn: () => Promise<void>): Promise<number> {
@@ -259,11 +328,7 @@ export class PodmanDesktopRunner {
       mkdirSync(parentDir, { recursive: true });
     }
 
-    const settingsContent = JSON.stringify({
-      'preferences.OpenDevTools': 'none',
-      'extensions.autoCheckUpdates': this._autoCheckUpdate,
-      'extensions.autoUpdate': this._autoUpdate,
-    });
+    const settingsContent = this._runnerOptions.createSettingsJson();
 
     // write the file
     console.log(`disabling OpenDevTools in configuration file ${settingsFile}`);
@@ -282,6 +347,10 @@ export class PodmanDesktopRunner {
 
   public setVideoAndTraceName(name: string): void {
     this._videoAndTraceName = name;
+
+    if (test.info().retry > 0) {
+      this._videoAndTraceName += `_retry${test.info().retry}`;
+    }
   }
 
   public getTestOutput(): string {

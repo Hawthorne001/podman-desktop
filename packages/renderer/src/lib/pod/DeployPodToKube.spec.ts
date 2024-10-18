@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,9 +23,13 @@
 import '@testing-library/jest-dom/vitest';
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import userEvent from '@testing-library/user-event';
 import * as jsYaml from 'js-yaml';
+import { tick } from 'svelte';
 import { router } from 'tinro';
 import { beforeEach, expect, test, vi } from 'vitest';
+
+import { lastPage } from '/@/stores/breadcrumb';
 
 import DeployPodToKube from './DeployPodToKube.svelte';
 
@@ -110,7 +114,12 @@ beforeEach(() => {
 
   // podYaml with volumes
   const podYaml = {
-    metadata: { name: 'hello' },
+    metadata: {
+      labels: {
+        app: 'hello',
+      },
+      name: 'hello',
+    },
     spec: {
       containers: [
         {
@@ -157,11 +166,12 @@ beforeEach(() => {
 });
 
 async function waitRender(customProperties: any): Promise<void> {
-  const result = render(DeployPodToKube, { resourceId: 'foo', engineId: 'bar', type: 'unknown', ...customProperties });
-  // wait that result.component.$$.ctx[0] is set
-  while (result.component.$$.ctx[0] === undefined) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  render(DeployPodToKube, { resourceId: 'foo', engineId: 'bar', type: 'unknown', ...customProperties });
+  await tick();
+  await tick();
+  await tick();
+  await tick();
+  await tick();
 }
 
 test('Expect to create routes with OpenShift and open Link', async () => {
@@ -243,6 +253,8 @@ test('Expect to create routes with OpenShift and open Link', async () => {
       },
     },
   });
+
+  await tick();
 
   // now, grab the link 'openRoute' with name 'hello-8080'
   const openRouteButton = screen.getByRole('link', { name: 'hello-8080' });
@@ -326,7 +338,12 @@ test('When deploying a pod, volumes should not be added (they are deleted by pod
   // Expect kubernetesCreatePod to be called with default namespace and a modified bodyPod with volumes removed
   await waitFor(() =>
     expect(kubernetesCreatePodMock).toBeCalledWith('default', {
-      metadata: { name: 'hello' },
+      metadata: {
+        labels: {
+          app: 'hello',
+        },
+        name: 'hello',
+      },
       spec: {
         containers: [
           {
@@ -359,7 +376,12 @@ test('Test deploying a group of compose containers with type compose still funct
   // Expect to return the correct create pod yaml
   await waitFor(() =>
     expect(kubernetesCreatePodMock).toBeCalledWith('default', {
-      metadata: { name: 'hello' },
+      metadata: {
+        labels: {
+          app: 'hello',
+        },
+        name: 'hello',
+      },
       spec: {
         containers: [
           {
@@ -386,13 +408,23 @@ test('When modifying the pod name, metadata.apps.label should also have been cha
   expect(createButton).toBeInTheDocument();
   expect(createButton).toBeEnabled();
 
+  const podNameInput = screen.getByLabelText('Pod Name');
+  await userEvent.click(podNameInput);
+  await userEvent.clear(podNameInput);
+  await userEvent.keyboard('newName');
+
   // Press the deploy button
   await fireEvent.click(createButton);
 
   // Expect kubernetesCreatePod to be called with default namespace and a modified bodyPod with volumes removed
   await waitFor(() =>
     expect(kubernetesCreatePodMock).toBeCalledWith('default', {
-      metadata: { name: 'hello' },
+      metadata: {
+        labels: {
+          app: 'newName',
+        },
+        name: 'newName',
+      },
       spec: {
         containers: [
           {
@@ -419,7 +451,7 @@ test('When deploying a pod, restricted security context is added', async () => {
   expect(createButton).toBeEnabled();
 
   // Click restricted
-  const useRestricted = screen.getByRole('checkbox', { name: 'Use restricted security context' });
+  const useRestricted = screen.getByRole('checkbox', { name: 'Use Restricted Security Context' });
   await fireEvent.click(useRestricted);
 
   // Press the deploy button
@@ -428,7 +460,12 @@ test('When deploying a pod, restricted security context is added', async () => {
   // Expect kubernetesCreatePod to be called with default namespace and a modified bodyPod with volumes removed
   await waitFor(() =>
     expect(kubernetesCreatePodMock).toBeCalledWith('default', {
-      metadata: { name: 'hello' },
+      metadata: {
+        labels: {
+          app: 'hello',
+        },
+        name: 'hello',
+      },
       spec: {
         containers: [
           {
@@ -525,4 +562,38 @@ test('Should display Open pod button after successful deployment', async () => {
 
   await fireEvent.click(openPodButton);
   expect(router.goto).toHaveBeenCalledWith(`/pods/kubernetes/foobar%2Fapi-fake-cluster.com%3A6443/default/logs`);
+});
+
+test('Done button should go back to previous page', async () => {
+  await waitFor(() => kubernetesGetCurrentContextNameMock.mockResolvedValue('default'));
+  await waitRender({});
+  const createButton = screen.getByRole('button', { name: 'Deploy' });
+  expect(createButton).toBeInTheDocument();
+  expect(createButton).toBeEnabled();
+
+  await waitFor(() =>
+    kubernetesCreatePodMock.mockResolvedValue({
+      metadata: { name: 'foobar/api-fake-cluster.com:6443', namespace: 'default' },
+    }),
+  );
+  await waitFor(() =>
+    kubernetesReadNamespacedPodMock.mockResolvedValue({
+      metadata: { name: 'foobar/api-fake-cluster.com:6443' },
+      status: {
+        phase: 'Running',
+      },
+    }),
+  );
+
+  vi.useFakeTimers();
+  await fireEvent.click(createButton);
+  await vi.runAllTimersAsync();
+
+  const doneButton = screen.getByRole('button', { name: 'Done' });
+  expect(doneButton).toBeInTheDocument();
+  expect(doneButton).toBeEnabled();
+
+  lastPage.set({ name: 'perious page', path: '/last' });
+  await fireEvent.click(doneButton);
+  expect(router.goto).toHaveBeenCalledWith(`/last`);
 });

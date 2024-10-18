@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
-import type { ManifestCreateOptions, ManifestInspectInfo } from '@podman-desktop/api';
+import type { ManifestCreateOptions, ManifestInspectInfo, ManifestPushOptions } from '@podman-desktop/api';
 import type { VolumeCreateOptions, VolumeCreateResponse } from 'dockerode';
 import Dockerode from 'dockerode';
 
@@ -85,9 +85,19 @@ export interface PodCreatePortOptions {
 }
 
 export interface PodCreateOptions {
-  name: string;
+  name?: string;
   portmappings?: PodCreatePortOptions[];
   labels?: { [key: string]: string };
+  Networks?: {
+    [key: string]: {
+      aliases?: string[];
+      interface_name?: string;
+    };
+  };
+  exit_policy?: string;
+  netns?: {
+    nsmode: string;
+  };
 }
 
 export interface ContainerCreateMountOption {
@@ -122,6 +132,14 @@ export interface ContainerCreateNetNSOption {
   value?: string;
 }
 
+export interface ContainerCreateNamedVolume {
+  Name: string;
+  Dest: string;
+  Options?: Array<string>;
+  IsAnonymous?: boolean;
+  SubPath?: string;
+}
+
 export interface ContainerCreateOptions {
   command?: string[];
   entrypoint?: string | string[];
@@ -150,6 +168,7 @@ export interface ContainerCreateOptions {
   dns_server?: Array<Array<number>>;
   hostadd?: Array<string>;
   userns?: string;
+  volumes?: Array<ContainerCreateNamedVolume>;
 }
 
 export interface PodRemoveOptions {
@@ -293,7 +312,7 @@ export interface ContainerStore {
   stopped: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface GraphOptions {}
 
 export interface GraphStatus {
@@ -345,6 +364,7 @@ export interface LibPod {
   startPod(podId: string): Promise<void>;
   stopPod(podId: string): Promise<void>;
   removePod(podId: string, options?: PodRemoveOptions): Promise<void>;
+  resolveShortnameImage(shortname: string): Promise<{ Names: string[] }>;
   restartPod(podId: string): Promise<void>;
   generateKube(names: string[]): Promise<string>;
   playKube(yamlContentFilePath: string): Promise<PlayKubeInfo>;
@@ -354,6 +374,8 @@ export interface LibPod {
   podmanListImages(options?: PodmanListImagesOptions): Promise<ImageInfo[]>;
   podmanCreateManifest(manifestOptions: ManifestCreateOptions): Promise<{ engineId: string; Id: string }>;
   podmanInspectManifest(manifestName: string): Promise<ManifestInspectInfo>;
+  podmanPushManifest(manifestOptions: ManifestPushOptions, authInfo?: Dockerode.AuthConfig): Promise<void>;
+  podmanRemoveManifest(manifestName: string): Promise<void>;
 }
 
 // tweak Dockerode by adding the support of libpod API
@@ -503,7 +525,7 @@ export class LibpodDockerode {
     prototypeOfDockerode.pruneAllImages = function (): Promise<unknown> {
       const optsf = {
         path: '/v4.2.0/libpod/images/prune?all=true&', // this works
-        // For some reason the below doesn't work? TODO / help / fixme
+        // For some reason the below doesn't work
         // options: {all: 'true'}, // this doesn't work
         method: 'POST',
         statusCodes: {
@@ -690,7 +712,7 @@ export class LibpodDockerode {
           404: 'no such pod',
           500: 'server error',
         },
-        options: options || {},
+        options: options ?? {},
       };
 
       return new Promise((resolve, reject) => {
@@ -831,6 +853,49 @@ export class LibpodDockerode {
       });
     };
 
+    // push manifest to the registry
+    prototypeOfDockerode.podmanPushManifest = function (
+      manifestOptions: ManifestPushOptions,
+      authInfo?: Dockerode.AuthConfig,
+    ): Promise<unknown> {
+      const encodedManifestName = encodeURIComponent(manifestOptions.name);
+      const encodedDestinationName = encodeURIComponent(manifestOptions.destination);
+
+      // If there is an authInfo, we need to add it as a Header named 'X-Registry-Auth' with the base64 encoded value
+      // in order to provide the credentials needed to push to the registry.
+      const headers = authInfo
+        ? {
+            'Content-Type': 'application/json', // Ensuring Content-Type is set
+            'X-Registry-Auth': Buffer.from(JSON.stringify(authInfo)).toString('base64'),
+          }
+        : {};
+
+      const optsf = {
+        path: `/v4.2.0/libpod/manifests/${encodedManifestName}/registry/${encodedDestinationName}?`,
+        method: 'POST',
+        statusCodes: {
+          200: true,
+          400: 'bad parameter in request',
+          404: 'no such manifest',
+          500: 'server error',
+        },
+        headers: headers,
+        // We require all=true to always be present in the URL in order for the manifest to be pushed correctly.
+        // If you do not provide it, it will return a "uknown manifest blob" error as it's trying to push a manifest blob with no images.
+        options: {
+          all: 'true',
+        },
+      };
+      return new Promise((resolve, reject) => {
+        this.modem.dial(optsf, (err: unknown, data: unknown) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(data);
+        });
+      });
+    };
+
     // add createManifest
     prototypeOfDockerode.podmanCreateManifest = function (manifestOptions: ManifestCreateOptions): Promise<unknown> {
       // make sure encodeURI component for the name ex. domain.com/foo/bar:latest
@@ -876,6 +941,53 @@ export class LibpodDockerode {
         options: {},
       };
 
+      return new Promise((resolve, reject) => {
+        this.modem.dial(optsf, (err: unknown, data: unknown) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(data);
+        });
+      });
+    };
+
+    // remove manifest
+    prototypeOfDockerode.podmanRemoveManifest = function (manifestName: string): Promise<unknown> {
+      // make sure encodeURI component for the name ex. domain.com/foo/bar:latest
+      const encodedManifestName = encodeURIComponent(manifestName);
+
+      const optsf = {
+        path: `/v4.2.0/libpod/manifests/${encodedManifestName}`,
+        method: 'DELETE',
+        statusCodes: {
+          200: true,
+          404: 'no such manifest',
+          500: 'server error',
+        },
+        options: {},
+      };
+
+      return new Promise((resolve, reject) => {
+        this.modem.dial(optsf, (err: unknown, data: unknown) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(data);
+        });
+      });
+    };
+
+    prototypeOfDockerode.resolveShortnameImage = function (shortname: string): Promise<unknown> {
+      const optsf = {
+        path: `/v5.0.0/libpod/images/${shortname}/resolve`,
+        method: 'GET',
+        statusCodes: {
+          // in the documentation it says code 204, but only code 200 works as intended
+          200: true,
+          400: 'bad parameter',
+          500: 'server error',
+        },
+      };
       return new Promise((resolve, reject) => {
         this.modem.dial(optsf, (err: unknown, data: unknown) => {
           if (err) {

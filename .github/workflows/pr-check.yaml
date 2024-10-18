@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2022 Red Hat, Inc.
+# Copyright (C) 2022-2024 Red Hat, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,13 @@
 
 name: pr-check
 
-on: [pull_request]
+on:
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
   windows:
@@ -29,21 +35,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: yarn
-        run: |
-          yarn --frozen-lockfile --network-timeout 180000
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Run Build
         timeout-minutes: 20
-        run: yarn compile:pull-request
+        run: pnpm compile:pull-request
 
       - name: List Build
         run: ls ./dist/
@@ -70,32 +77,25 @@ jobs:
 
   linux:
     name: Linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
-
-      - uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-
-      - name: Execute yarn
-        run: yarn --frozen-lockfile --network-timeout 180000
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Install flatpak
         run: |
@@ -108,7 +108,7 @@ jobs:
 
       - name: Run Build
         timeout-minutes: 20
-        run: yarn compile:pull-request
+        run: pnpm compile:pull-request
 
       - name: List Build
         run: ls -la ./dist/
@@ -132,29 +132,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
-
-      - uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-      - name: Execute yarn
-        if: ${{ steps.cacheNodeModules.outputs.cache-hit != 'true' }}
-        run: yarn --frozen-lockfile --network-timeout 180000
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Run Build
         timeout-minutes: 40
-        run: yarn compile:pull-request
+        run: pnpm compile:pull-request
 
       - name: List Build
         run: ls -la ./dist/
@@ -172,71 +165,130 @@ jobs:
           name: macos-universal-dmg
           path: ./dist/podman-desktop-*universal.dmg
 
-
-  lint-format-unit:
-    name: linter, formatters and unit tests / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, ubuntu-22.04]
+  website-build:
+    name: build website
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
+      - name: Execute pnpm
+        run: pnpm install
 
-      - name: Get yarn cache directory path (mac/Linux)
-        if: ${{ matrix.os=='ubuntu-22.04'}}
-        id: yarn-cache-dir-path-unix
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
+      - name: Run website
+        run: pnpm website:build
 
-      - uses: actions/cache@v4
-        if: ${{ matrix.os=='ubuntu-22.04'}}
-        id: yarn-cache-unix
+      - name: Store pull request details for publish-netlify
+        run: |
+          echo "${{ github.event.number }}" > PR_NUMBER
+          echo "${{ github.event.pull_request.head.sha }}" > PR_SHA
+
+      - name: Upload artifact website-content
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ steps.yarn-cache-dir-path-unix.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
+          name: website-content
+          path: |
+            website/build
+            PR_NUMBER
+            PR_SHA
 
-      - name: Execute yarn
-        run: yarn --frozen-lockfile --network-timeout 180000
+  lint-format:
+    name: linter, formatters
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Run linter
-        run: yarn lint:check
+        run: pnpm lint:check
 
       - name: Run formatter
-        run: yarn format:check
-
-      - name: Run unit tests
-        run: yarn test:unit
-
-      - name: Run typecheck
-        run: yarn typecheck
-
-      - name: Run svelte check
-        run: yarn svelte:check
+        run: pnpm format:check
 
       # Check we don't have changes in git
       - name: Check no changes in git
-        if: ${{ matrix.os=='ubuntu-22.04'}}
         run: |
           if ! git diff --exit-code; then
             echo "Found changes in git"
             exit 1
           fi
 
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Execute pnpm
+        run: pnpm install
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run svelte check
+        run: pnpm svelte:check
+
+  unit-tests:
+    name: unit tests / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Execute pnpm
+        run: pnpm install
+
+      - name: Run unit tests
+        run: pnpm test:unit
+
   smoke-e2e-tests:
     name: smoke e2e tests
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       - name: Update podman
         run: |
@@ -254,26 +306,118 @@ jobs:
           wget https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_22.04/amd64/conmon_2.1.2~0_amd64.deb -O /tmp/conmon_2.1.2.deb
           sudo apt install /tmp/conmon_2.1.2.deb
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
-
-      - uses: actions/cache@v4
-        id: yarn-cache
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
         with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
+          run_install: false
 
-      - name: Execute yarn
-        run: yarn --frozen-lockfile
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Run E2E smoke tests
-        run: yarn test:e2e:smoke
+        run: pnpm test:e2e:smoke
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: smoke-e2e-tests
-          path: ./tests/output/
+          path: |
+            ./tests/**/output/
+            !./tests/**/traces/raw
+
+  detect_pnpm_changes:
+    name: Detect pnpm lock or pr-check files changes
+    runs-on: ubuntu-24.04
+    outputs:
+      pnpm_lock_changed: ${{ steps.pnpm_changed.outputs.PNPM_LOCK_CHANGED }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Evaluate changes in files
+        id: pnpm_changed
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }} HEAD > changes.txt
+          if grep -q  -e 'pnpm-lock.yaml' -e 'pr-check.yaml' changes.txt; then
+            echo "PNPM_LOCK_CHANGED=true" >> $GITHUB_OUTPUT
+          else
+            echo "PNPM_LOCK_CHANGED=false" >> $GITHUB_OUTPUT
+          fi
+
+  run-update-e2e-test:
+    name: win update e2e tests
+    needs: detect_pnpm_changes
+    if: contains(github.event.pull_request.labels.*.name, 'area/update') || needs.detect_pnpm_changes.outputs.pnpm_lock_changed == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Execute pnpm
+        run: pnpm install
+
+      - name: Execute PNPM
+        run: pnpm install --frozen-lockfile
+
+      - name: Adjust/Downgrade local podman desktop version Windows
+        run: |
+          $version="1.0.0"
+          jq --arg version "$version" '.version = $version' package.json | Out-File -FilePath package.json_tmp
+          Move-Item -Path package.json_tmp -Destination package.json -Force
+
+      - name: Build Podman Desktop locally with electron updater included
+        env:
+          ELECTRON_ENABLE_INSPECT: true
+        run: |
+          pnpm compile:current --win nsis
+          $path=('./dist/win-unpacked/Podman Desktop.exe' | resolve-path).ProviderPath
+          echo $path
+          echo ("PODMAN_DESKTOP_BINARY=" + $path) >> $env:GITHUB_ENV
+
+      - name: Run E2E Update test
+        run: |
+          echo "${{ env.PODMAN_DESKTOP_BINARY }}"
+          pnpm test:e2e:update:run
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-update-e2e-test
+          path: |
+            ./tests/**/output/
+            !./tests/**/traces/raw
+
+  update-e2e-test:
+    name: update E2E test
+    runs-on: ubuntu-24.04
+    needs: run-update-e2e-test
+    if: |
+      always()
+    steps:
+      - name: Evaluate the Windows Update test results
+        run: |
+          echo "Windows updater result: ${{ needs.run-update-e2e-test.result }}"
+          if [ "${{ needs.run-update-e2e-test.result }}" = "failure" ]; then
+            echo "Windows udpater test failed..."
+            exit 1
+          else
+            echo "Windows updater test succeeded or was skipped..."
+          fi

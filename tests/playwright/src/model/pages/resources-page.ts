@@ -23,12 +23,28 @@ import { SettingsPage } from './settings-page';
 export class ResourcesPage extends SettingsPage {
   readonly heading: Locator;
   readonly featuredProviderResources: Locator;
-  readonly podmanResources: Locator;
 
   constructor(page: Page) {
     super(page, 'Resources');
-    this.heading = page.getByRole('heading', { name: 'Resources' });
-    this.featuredProviderResources = page.getByRole('region', { name: 'Featured Provider Resources' });
-    this.podmanResources = this.featuredProviderResources.getByRole('region', { name: 'podman', exact: true });
+    this.heading = this.header.getByRole('heading', { name: 'Title' }).and(this.header.getByText('Resources'));
+    this.featuredProviderResources = this.content.getByRole('region', { name: 'Featured Provider Resources' });
+  }
+
+  public async resourceCardIsVisible(resourceLabel: string): Promise<boolean> {
+    return (await this.resourceCardLocatorGenerator(resourceLabel).count()) > 0;
+  }
+
+  public async goToCreateNewResourcePage(resourceLabel: string): Promise<void> {
+    if (!(await this.resourceCardIsVisible(resourceLabel))) {
+      throw new Error(`Resource card with label ${resourceLabel} is not available`);
+    }
+
+    await this.resourceCardLocatorGenerator(resourceLabel)
+      .getByRole('button', { name: `Create new ${resourceLabel}` })
+      .click();
+  }
+
+  private resourceCardLocatorGenerator(resourceLabel: string): Locator {
+    return this.content.getByRole('region', { name: resourceLabel, exact: true });
   }
 }

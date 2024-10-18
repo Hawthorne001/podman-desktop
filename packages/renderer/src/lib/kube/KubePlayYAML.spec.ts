@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import '@testing-library/jest-dom/vitest';
 import type { ProviderStatus } from '@podman-desktop/api';
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { router } from 'tinro';
 import { beforeAll, expect, test, vi } from 'vitest';
 
 import type { ProviderContainerConnectionInfo, ProviderInfo } from '/@api/provider-info';
@@ -68,6 +69,15 @@ const mockedErroredPlayKubeInfo: PlayKubeInfo = {
   ],
 };
 
+// mock the router
+vi.mock('tinro', () => {
+  return {
+    router: {
+      goto: vi.fn(),
+    },
+  };
+});
+
 // fake the window.events object
 beforeAll(() => {
   (window.events as unknown) = {
@@ -91,6 +101,7 @@ function setup() {
   const pStatus: ProviderStatus = 'started';
   const pInfo: ProviderContainerConnectionInfo = {
     name: 'test',
+    displayName: 'test',
     status: 'started',
     endpoint: {
       socketPath: '',
@@ -128,12 +139,12 @@ test('error: When pressing the Play button, expect us to show the errors to the 
   const fileInput = screen.getByRole('textbox', { name: 'Kubernetes YAML file' });
   expect(fileInput).toBeInTheDocument();
 
-  const browseButton = screen.getByRole('button', { name: 'Browse ...' });
+  const browseButton = screen.getByLabelText('browse');
   expect(browseButton).toBeInTheDocument();
   await userEvent.click(browseButton);
 
   // Simulate selecting a runtime
-  const runtimeOption = screen.getByText('Using a Podman container engine');
+  const runtimeOption = screen.getByText('Podman container engine');
   expect(runtimeOption).toBeInTheDocument();
 
   // Simulate clicking the "Play" button
@@ -147,7 +158,7 @@ test('error: When pressing the Play button, expect us to show the errors to the 
   expect(error).toBeInTheDocument();
 });
 
-test('expect done button is there at the end', async () => {
+test('expect done button is there at the end and redirects to pods', async () => {
   (window as any).playKube = vi.fn().mockResolvedValue({
     Pods: [],
   });
@@ -160,12 +171,12 @@ test('expect done button is there at the end', async () => {
   const fileInput = screen.getByRole('textbox', { name: 'Kubernetes YAML file' });
   expect(fileInput).toBeInTheDocument();
 
-  const browseButton = screen.getByRole('button', { name: 'Browse ...' });
+  const browseButton = screen.getByLabelText('browse');
   expect(browseButton).toBeInTheDocument();
   await userEvent.click(browseButton);
 
   // Simulate selecting a runtime
-  const runtimeOption = screen.getByText('Using a Podman container engine');
+  const runtimeOption = screen.getByText('Podman container engine');
   expect(runtimeOption).toBeInTheDocument();
 
   // Simulate clicking the "Play" button
@@ -178,4 +189,40 @@ test('expect done button is there at the end', async () => {
   expect(doneButton).toBeInTheDocument();
   // check that text value is also 'Done'
   expect(doneButton).toHaveTextContent('Done');
+
+  // check that clicking redirects to the pods page
+  expect(router.goto).not.toHaveBeenCalled();
+  await userEvent.click(doneButton);
+
+  expect(router.goto).toHaveBeenCalledWith(`/pods`);
+});
+
+test('expect runtime boxes have the correct selection borders', async () => {
+  (window as any).playKube = vi.fn().mockResolvedValue({
+    Pods: [],
+  });
+
+  setup();
+  render(KubePlayYAML, {});
+
+  // check the current borders
+  const podmanOption = screen.getByText('Podman container engine');
+  expect(podmanOption).toBeInTheDocument();
+  expect(podmanOption.parentElement?.parentElement).toHaveClass('border-[var(--pd-content-card-border-selected)]');
+  expect(podmanOption.parentElement?.parentElement).not.toHaveClass('border-[var(--pd-content-card-border)]');
+
+  const kubeOption = screen.getByText('Kubernetes cluster');
+  expect(kubeOption).toBeInTheDocument();
+  expect(kubeOption.parentElement?.parentElement).not.toHaveClass('border-[var(--pd-content-card-border-selected)]');
+  expect(kubeOption.parentElement?.parentElement).toHaveClass('border-[var(--pd-content-card-border)]');
+
+  // now switch selection to Kubernetes
+  await userEvent.click(kubeOption);
+
+  // and expect opposite selection borders
+  expect(podmanOption.parentElement?.parentElement).not.toHaveClass('border-[var(--pd-content-card-border-selected)]');
+  expect(podmanOption.parentElement?.parentElement).toHaveClass('border-[var(--pd-content-card-border)]');
+
+  expect(kubeOption.parentElement?.parentElement).toHaveClass('border-[var(--pd-content-card-border-selected)]');
+  expect(kubeOption.parentElement?.parentElement).not.toHaveClass('border-[var(--pd-content-card-border)]');
 });

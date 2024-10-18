@@ -20,6 +20,8 @@
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { configurationProperties } from '/@/stores/configurationProperties';
+
 import { AppearanceSettings } from '../../../../main/src/plugin/appearance-settings';
 import { AppearanceUtil } from './appearance-util';
 
@@ -31,52 +33,6 @@ const getConfigurationValueMock = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   (window as any).getConfigurationValue = getConfigurationValueMock;
-});
-
-// temporary as only dark mode is supported as rendering for now
-// it should return empty later
-test('Expect dark mode using system when OS is set to light', async () => {
-  (window as any).matchMedia = vi.fn().mockReturnValue({
-    matches: false,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  });
-
-  getConfigurationValueMock.mockResolvedValue(AppearanceSettings.SystemEnumValue);
-
-  // expect to have class being "dark" as for now we force dark mode in system mode
-  expect(await appearanceUtil.isDarkMode()).toBe(true);
-});
-
-test('Expect dark mode using system when OS is set to dark', async () => {
-  (window as any).matchMedia = vi.fn().mockReturnValue({
-    matches: true,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  });
-
-  getConfigurationValueMock.mockResolvedValue(AppearanceSettings.SystemEnumValue);
-
-  // expect to have class being "dark" as OS is using dark
-  expect(await appearanceUtil.isDarkMode()).toBe(true);
-});
-
-test('Expect light mode using light configuration', async () => {
-  getConfigurationValueMock.mockResolvedValue(AppearanceSettings.LightEnumValue);
-
-  expect(await appearanceUtil.isDarkMode()).toBe(false);
-});
-
-test('Expect dark mode using dark configuration', async () => {
-  getConfigurationValueMock.mockResolvedValue(AppearanceSettings.DarkEnumValue);
-
-  expect(await appearanceUtil.isDarkMode()).toBe(true);
-});
-
-test('Expect light mode using light configuration', async () => {
-  getConfigurationValueMock.mockResolvedValue(AppearanceSettings.LightEnumValue);
-
-  expect(await appearanceUtil.isDarkMode()).toBe(false);
 });
 
 test('Expect standard icon using dark configuration', async () => {
@@ -96,15 +52,17 @@ test('Expect standard icon using light configuration', async () => {
 test('Expect dark icon using dark configuration', async () => {
   const img = { light: 'light.png', dark: 'dark.png' };
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.DarkEnumValue);
+  configurationProperties.set([]);
 
-  expect(await appearanceUtil.getImage(img)).toBe(img.dark);
+  await vi.waitFor(async () => expect(await appearanceUtil.getImage(img)).toBe(img.dark));
 });
 
 test('Expect light icon using light configuration', async () => {
   const img = { light: 'light.png', dark: 'dark.png' };
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.LightEnumValue);
+  configurationProperties.set([]);
 
-  expect(await appearanceUtil.getImage(img)).toBe(img.light);
+  await vi.waitFor(async () => expect(await appearanceUtil.getImage(img)).toBe(img.light));
 });
 
 describe('getTheme', () => {
@@ -130,9 +88,7 @@ describe('getTheme', () => {
 
     const theme = await appearanceUtil.getTheme();
 
-    // FIXME: for now we hardcode to the dark theme even if the Operating System is using light theme
-    // expect(theme).toBe('light');
-    expect(theme).toBe('dark');
+    expect(theme).toBe('light');
   });
 
   test('should return dark if value is dark even if os is light', async () => {
@@ -172,7 +128,7 @@ describe('getTheme', () => {
     expect(theme).toBe(customTheme);
   });
 
-  test('should return custom value even if os is dark', async () => {
+  test('should return custom value even if os is dark when matches found', async () => {
     (window as any).matchMedia = vi.fn().mockReturnValue({
       matches: false,
       addEventListener: vi.fn(),

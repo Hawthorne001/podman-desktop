@@ -27,7 +27,7 @@ import Modal from './Modal.svelte';
 test('modal should be visible', async () => {
   render(Modal);
 
-  const bg = screen.getByLabelText('close');
+  const bg = screen.getByLabelText('fade-bg');
   expect(bg).toBeDefined();
   const dialog = screen.getByRole('dialog');
   expect(dialog).toBeDefined();
@@ -35,19 +35,27 @@ test('modal should be visible', async () => {
 
 test('bg click should trigger close event', async () => {
   const closeMock = vi.fn();
-  const { component } = render(Modal);
-  component.$on('close', closeMock);
+  render(Modal, { onclose: closeMock });
 
-  const bg = screen.getByLabelText('close');
+  const bg = screen.getByLabelText('fade-bg');
   await userEvent.click(bg);
 
   expect(closeMock).toHaveBeenCalled();
 });
 
+test('bg click should NOT trigger close event if ignoreFocusOut is true', async () => {
+  const closeMock = vi.fn();
+  render(Modal, { onclose: closeMock, ignoreFocusOut: true });
+
+  const bg = screen.getByLabelText('fade-bg');
+  await userEvent.click(bg);
+
+  expect(closeMock).not.toHaveBeenCalled();
+});
+
 test('Escape key should trigger close', async () => {
   const closeMock = vi.fn();
-  const { component } = render(Modal);
-  component.$on('close', closeMock);
+  render(Modal, { onclose: closeMock });
 
   await userEvent.keyboard('{Escape}');
   expect(closeMock).toHaveBeenCalled();
@@ -58,13 +66,16 @@ describe('translation-y', () => {
     render(Modal);
 
     const dialog = screen.getByRole('dialog');
-    expect(dialog.classList).toContain('translate-y-[-20%]');
+    expect(dialog.classList).toContain('translate-y-[-5%]');
+    expect(dialog.classList).not.toContain('my-[32px]');
   });
 
   test('modal with top should not have translate-y', async () => {
     render(Modal, { top: true });
 
     const dialog = screen.getByRole('dialog');
-    expect(dialog.classList).not.toContain('translate-y-[-20%]');
+    expect(dialog.classList).not.toContain('translate-y-[-5%]');
+    // should contain margin of size status bar height
+    expect(dialog.classList).toContain('my-[32px]');
   });
 });

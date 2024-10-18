@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ImageInfo } from '@podman-desktop/api';
-import { Tab } from '@podman-desktop/ui-svelte';
+import { StatusIcon, Tab } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
@@ -14,7 +14,6 @@ import { ImageUtils } from '../image/image-utils';
 import ImageDetailsSummary from '../image/ImageDetailsSummary.svelte';
 import type { ImageInfoUI } from '../image/ImageInfoUI';
 import ManifestIcon from '../images/ManifestIcon.svelte';
-import StatusIcon from '../images/StatusIcon.svelte';
 import Badge from '../ui/Badge.svelte';
 import DetailsPage from '../ui/DetailsPage.svelte';
 import { getTabUrl, isTabSelected } from '../ui/Util';
@@ -64,16 +63,16 @@ onMount(() => {
 
 {#if imageMetadataInfo}
   <DetailsPage
-    title="{imageMetadataInfo.name}"
-    titleDetail="{imageMetadataInfo.shortId}"
-    subtitle="{imageMetadataInfo.tag}"
-    bind:this="{detailsPage}">
-    <StatusIcon slot="icon" icon="{ManifestIcon}" size="{24}" status="{imageMetadataInfo.status}" />
+    title={imageMetadataInfo.name}
+    titleDetail={imageMetadataInfo.shortId}
+    subtitle={imageMetadataInfo.tag}
+    bind:this={detailsPage}>
+    <StatusIcon slot="icon" icon={ManifestIcon} size={24} status={imageMetadataInfo.status} />
     <svelte:fragment slot="subtitle">
       {#if imageMetadataInfo.badges.length}
         <div class="flex flex-row">
           {#each imageMetadataInfo.badges as badge}
-            <Badge color="{badge.color}" label="{badge.label}" />
+            <Badge color={badge.color} label={badge.label} />
           {/each}
         </div>
       {/if}
@@ -81,14 +80,11 @@ onMount(() => {
 
     <!-- Add "actions" here in the future. -->
     <svelte:fragment slot="tabs">
-      <Tab
-        title="Summary"
-        selected="{isTabSelected($router.path, 'summary')}"
-        url="{getTabUrl($router.path, 'summary')}" />
+      <Tab title="Summary" selected={isTabSelected($router.path, 'summary')} url={getTabUrl($router.path, 'summary')} />
     </svelte:fragment>
     <svelte:fragment slot="content">
       <Route path="/summary" breadcrumb="Summary" navigationHint="tab">
-        <ImageDetailsSummary image="{imageMetadataInfo}" />
+        <ImageDetailsSummary image={imageMetadataInfo} />
       </Route>
     </svelte:fragment>
   </DetailsPage>

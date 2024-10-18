@@ -36,12 +36,14 @@ export interface CatalogExtension {
   extensionName: string;
   displayName: string;
   categories: string[];
+  keywords: string[];
   unlisted: boolean;
   versions: CatalogExtensionVersion[];
 }
 
 interface CatalogExtensionVersion {
   version: string;
+  podmanDesktopVersion?: string;
   ociUri: string;
   preview: boolean;
   lastUpdated: Date;

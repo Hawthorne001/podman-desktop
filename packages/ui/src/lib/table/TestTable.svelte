@@ -1,6 +1,8 @@
 <script lang="ts">
 import { createEventDispatcher } from 'svelte';
 
+import DurationColumn from '/@/lib/table/DurationColumn.svelte';
+
 import SimpleColumn from './SimpleColumn.svelte';
 import { Column, Row } from './table';
 import Table from './Table.svelte';
@@ -9,18 +11,22 @@ let table: Table;
 let selectedItemsNumber: number;
 
 const dispatch = createEventDispatcher<{ update: string }>();
+export let onUpdate: (text: string) => void = text => {
+  dispatch('update', text);
+};
 
 type Person = {
   id: number;
   name: string;
   age: number;
   hobby: string;
+  duration?: number;
 };
 
-const people: Person[] = [
+export let people: Person[] = [
   { id: 1, name: 'John', age: 57, hobby: 'Skydiving' },
   { id: 2, name: 'Henry', age: 27, hobby: 'Cooking' },
-  { id: 3, name: 'Charlie', age: 43, hobby: 'Biking' },
+  { id: 3, name: 'Charlie', age: 43, hobby: 'Biking', duration: new Date().getTime() - 3600000 },
 ];
 
 const idCol: Column<Person, string> = new Column('Id', {
@@ -42,7 +48,7 @@ const ageCol: Column<Person, string> = new Column('Age', {
   renderMapping: obj => obj.age.toString(),
   renderer: SimpleColumn,
   comparator: (a, b): number => {
-    dispatch('update', 'sorting');
+    onUpdate('sorting');
     return a.age - b.age;
   },
   initialOrder: 'descending',
@@ -54,7 +60,12 @@ const hobbyCol: Column<Person, string> = new Column('Hobby', {
   renderer: SimpleColumn,
 });
 
-const columns: Column<Person, string>[] = [idCol, nameCol, ageCol, hobbyCol];
+const durationCol = new Column<Person, Date | undefined>('Duration', {
+  renderMapping: (obj): Date | undefined => (obj.duration ? new Date(obj.duration) : undefined),
+  renderer: DurationColumn,
+});
+
+const columns = [idCol, nameCol, ageCol, hobbyCol, durationCol];
 const selectable = (person: Person): boolean => person.age < 50;
 const row = new Row<Person>({
   selectable,
@@ -64,11 +75,11 @@ const row = new Row<Person>({
 
 <Table
   kind="people"
-  bind:this="{table}"
-  bind:selectedItemsNumber="{selectedItemsNumber}"
-  data="{people}"
-  columns="{columns}"
-  row="{row}"
+  bind:this={table}
+  bind:selectedItemsNumber={selectedItemsNumber}
+  data={people}
+  columns={columns}
+  row={row}
   defaultSortColumn="Id"
   on:update>
 </Table>

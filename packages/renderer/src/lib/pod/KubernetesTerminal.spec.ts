@@ -19,7 +19,10 @@
 import '@testing-library/jest-dom/vitest';
 
 import { render, waitFor } from '@testing-library/svelte';
+/* eslint-disable import/no-duplicates */
+import { tick } from 'svelte';
 import { get } from 'svelte/store';
+/* eslint-enable import/no-duplicates */
 import { beforeAll, expect, test, vi } from 'vitest';
 
 import KubernetesTerminal from '/@/lib/pod/KubernetesTerminal.svelte';
@@ -57,6 +60,7 @@ test('Test should render the terminal and being able to reconnect', async () => 
   );
 
   const renderObject = render(KubernetesTerminal, { podName: 'podName', containerName: 'containerName' });
+  await tick();
   await waitFor(() => expect(kubernetesExecMock).toHaveBeenCalled());
 
   onStdOutCallback(Buffer.from('hello\nworld'));
@@ -68,12 +72,15 @@ test('Test should render the terminal and being able to reconnect', async () => 
   const terminals = get(terminalStates);
   expect(terminals.size).toBe(0);
 
-  renderObject.component.$destroy();
+  renderObject.unmount();
   const terminalsAfterDestroy = get(terminalStates);
   expect(terminalsAfterDestroy.size).toBe(1);
 
   render(KubernetesTerminal, { podName: 'podName', containerName: 'containerName' });
 
   await new Promise(resolve => setTimeout(resolve, 1000));
-  expect(kubernetesExecMock).toHaveBeenCalledTimes(1);
+
+  // Called twice because we now create the terminal each session when we reconnect in order
+  // to ensure that we have a fresh terminal with the previous history shown.
+  expect(kubernetesExecMock).toHaveBeenCalledTimes(2);
 });

@@ -16,6 +16,7 @@ import { onMount } from 'svelte';
 import KubernetesCurrentContextConnectionBadge from '/@/lib/ui/KubernetesCurrentContextConnectionBadge.svelte';
 import { kubernetesCurrentContextServicesFiltered, serviceSearchPattern } from '/@/stores/kubernetes-contexts-state';
 
+import { withBulkConfirmation } from '../actions/BulkActions';
 import ServiceIcon from '../images/ServiceIcon.svelte';
 import KubeApplyYamlButton from '../kube/KubeApplyYAMLButton.svelte';
 import { ServiceUtils } from './service-utils';
@@ -75,18 +76,14 @@ let statusColumn = new TableColumn<ServiceUI>('Status', {
 });
 
 let nameColumn = new TableColumn<ServiceUI>('Name', {
+  width: '1.3fr',
   renderer: ServiceColumnName,
   comparator: (a, b) => a.name.localeCompare(b.name),
 });
 
-let namespaceColumn = new TableColumn<ServiceUI, string>('Namespace', {
-  renderMapping: service => service.namespace,
-  renderer: TableSimpleColumn,
-  comparator: (a, b) => a.namespace.localeCompare(b.namespace),
-});
-
 let typeColumn = new TableColumn<ServiceUI>('Type', {
   renderer: ServiceColumnType,
+  overflow: true,
   comparator: (a, b) => a.type.localeCompare(b.type),
 });
 
@@ -97,6 +94,7 @@ let clusterIPColumn = new TableColumn<ServiceUI, string>('Cluster IP', {
 });
 
 let portsColumn = new TableColumn<ServiceUI, string>('Ports', {
+  width: '2fr',
   renderMapping: service => service.ports,
   renderer: TableSimpleColumn,
   comparator: (a, b) => a.ports.localeCompare(b.ports),
@@ -108,10 +106,9 @@ let ageColumn = new TableColumn<ServiceUI, Date | undefined>('Age', {
   comparator: (a, b) => moment(b.created).diff(moment(a.created)),
 });
 
-const columns: TableColumn<ServiceUI, ServiceUI | string | Date | undefined>[] = [
+const columns = [
   statusColumn,
   nameColumn,
-  namespaceColumn,
   typeColumn,
   clusterIPColumn,
   portsColumn,
@@ -122,7 +119,7 @@ const columns: TableColumn<ServiceUI, ServiceUI | string | Date | undefined>[] =
 const row = new TableRow<ServiceUI>({ selectable: _service => true });
 </script>
 
-<NavPage bind:searchTerm="{searchTerm}" title="services">
+<NavPage bind:searchTerm={searchTerm} title="services">
   <svelte:fragment slot="additional-actions">
     <KubeApplyYamlButton />
   </svelte:fragment>
@@ -130,10 +127,14 @@ const row = new TableRow<ServiceUI>({ selectable: _service => true });
   <svelte:fragment slot="bottom-additional-actions">
     {#if selectedItemsNumber > 0}
       <Button
-        on:click="{() => deleteSelectedServices()}"
+        on:click={() =>
+          withBulkConfirmation(
+            deleteSelectedServices,
+            `delete ${selectedItemsNumber} service${selectedItemsNumber > 1 ? 's' : ''}`,
+          )}
         title="Delete {selectedItemsNumber} selected items"
-        inProgress="{bulkDeleteInProgress}"
-        icon="{faTrash}" />
+        inProgress={bulkDeleteInProgress}
+        icon={faTrash} />
       <span>On {selectedItemsNumber} selected items.</span>
     {/if}
     <div class="flex grow justify-end">
@@ -144,18 +145,18 @@ const row = new TableRow<ServiceUI>({ selectable: _service => true });
   <div class="flex min-w-full h-full" slot="content">
     <Table
       kind="service"
-      bind:this="{table}"
-      bind:selectedItemsNumber="{selectedItemsNumber}"
-      data="{services}"
-      columns="{columns}"
-      row="{row}"
+      bind:this={table}
+      bind:selectedItemsNumber={selectedItemsNumber}
+      data={services}
+      columns={columns}
+      row={row}
       defaultSortColumn="Name"
-      on:update="{() => (services = services)}">
+      on:update={() => (services = services)}>
     </Table>
 
     {#if $kubernetesCurrentContextServicesFiltered.length === 0}
       {#if searchTerm}
-        <FilteredEmptyScreen icon="{ServiceIcon}" kind="services" bind:searchTerm="{searchTerm}" />
+        <FilteredEmptyScreen icon={ServiceIcon} kind="services" bind:searchTerm={searchTerm} />
       {:else}
         <ServiceEmptyScreen />
       {/if}

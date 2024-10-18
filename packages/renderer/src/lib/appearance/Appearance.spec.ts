@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ import '@testing-library/jest-dom/vitest';
 import { render, type RenderResult } from '@testing-library/svelte';
 import { beforeEach, expect, test, vi } from 'vitest';
 
+import { configurationProperties } from '/@/stores/configurationProperties';
+
 import { AppearanceSettings } from '../../../../main/src/plugin/appearance-settings';
 import Appearance from './Appearance.svelte';
 
@@ -36,6 +38,7 @@ beforeEach(() => {
     addEventListener: addEventListenerMock,
     removeEventListener: vi.fn(),
   });
+  (window as any).setNativeTheme = vi.fn();
 });
 
 function getRootElement(container: HTMLElement): HTMLElement {
@@ -62,9 +65,7 @@ async function awaitRender(): Promise<RenderResult<Appearance>> {
   return result;
 }
 
-// temporary as only dark mode is supported as rendering for now
-// it should return empty later
-test('Expect dark mode using system when OS is set to light', async () => {
+test('Expect light mode using system when OS is set to light', async () => {
   (window as any).matchMedia = vi.fn().mockReturnValue({
     matches: false,
     addEventListener: vi.fn(),
@@ -72,13 +73,11 @@ test('Expect dark mode using system when OS is set to light', async () => {
   });
 
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.SystemEnumValue);
+  configurationProperties.set([]);
 
   const { baseElement } = await awaitRender();
-
-  const val = getRootElementClassesValue(baseElement);
-
-  // expect to have class being "dark" as for now we force dark mode in system mode
-  expect(val).toBe('dark');
+  // expect to have no (dark) class as OS is using light
+  await vi.waitFor(() => expect(getRootElementClassesValue(baseElement)).toBe(''));
 });
 
 test('Expect dark mode using system when OS is set to dark', async () => {
@@ -89,14 +88,16 @@ test('Expect dark mode using system when OS is set to dark', async () => {
   });
 
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.SystemEnumValue);
+  configurationProperties.set([]);
 
   const { baseElement } = await awaitRender();
   // expect to have class being "dark" as OS is using dark
-  expect(getRootElementClassesValue(baseElement)).toBe('dark');
+  await vi.waitFor(() => expect(getRootElementClassesValue(baseElement)).toBe('dark'));
 });
 
 test('Expect light mode using light configuration', async () => {
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.LightEnumValue);
+  configurationProperties.set([]);
 
   const { baseElement } = await awaitRender();
 
@@ -109,10 +110,11 @@ test('Expect light mode using light configuration', async () => {
 
 test('Expect dark mode using dark configuration', async () => {
   getConfigurationValueMock.mockResolvedValue(AppearanceSettings.DarkEnumValue);
+  configurationProperties.set([]);
 
   const { baseElement } = await awaitRender();
 
-  // expect to have class being "dark" as we should be in light mode
+  // expect to have class being "dark" as we should be in dark mode
   expect(getRootElementClassesValue(baseElement)).toBe('dark');
 
   // expect to have color-scheme: dark

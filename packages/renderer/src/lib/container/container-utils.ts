@@ -18,6 +18,8 @@
 
 import type { Port } from '@podman-desktop/api';
 import { ContainerIcon } from '@podman-desktop/ui-svelte/icons';
+// eslint-disable-next-line unicorn/prefer-node-protocol
+import { Buffer } from 'buffer';
 import { filesize } from 'filesize';
 import humanizeDuration from 'humanize-duration';
 import moment from 'moment';
@@ -32,22 +34,30 @@ import { ContainerGroupInfoTypeUI } from './ContainerInfoUI';
 
 export class ContainerUtils {
   getName(containerInfo: ContainerInfo) {
-    // part of a compose ?
-    const composeService = containerInfo.Labels?.['com.docker.compose.service'];
-    if (composeService) {
-      const composeContainerNumber = containerInfo.Labels?.['com.docker.compose.container-number'];
-      if (composeContainerNumber) {
-        return `${composeService}-${composeContainerNumber}`;
-      }
-    }
+    // If the container has no name, return an empty string.
     if (containerInfo.Names.length === 0) {
       return '';
+    }
+
+    // Safely determine if this is a compose project or not by checking the project label.
+    const composeProject = containerInfo.Labels?.['com.docker.compose.project'];
+
+    /* 
+      When deploying with compose, the container name will be <project>-<service-name>-<container-number> under Names[0].
+      This is added to the container name to make it unique.
+      HOWEVER, if you specify container_name in the compose file, the container name will be whatever is is set to and
+      will not have either the project or service number.
+      Thus the easier way to show the correct name is to get the  containerInfo.Labels?.['com.docker.compose.project'] label
+      remove it from the Names[0] and return the result.
+      */
+    if (composeProject) {
+      return containerInfo.Names[0].replace(/^\//, '').replace(`${composeProject}-`, '');
     }
     return containerInfo.Names[0].replace(/^\//, '');
   }
 
   getState(containerInfo: ContainerInfo): string {
-    return (containerInfo.State || '').toUpperCase();
+    return (containerInfo.State ?? '').toUpperCase();
   }
 
   getUptime(containerInfo: ContainerInfo): string {
@@ -66,12 +76,11 @@ export class ContainerUtils {
     return humanizeDuration(uptimeInMs, { round: true, largest: 1 });
   }
 
-  refreshUptime(containerInfoUI: ContainerInfoUI): string {
+  getUpDate(containerInfoUI: ContainerInfoUI): Date | undefined {
     if (containerInfoUI.state !== 'RUNNING' || !containerInfoUI.startedAt) {
-      return '';
+      return undefined;
     }
-    // make it human friendly
-    return this.humanizeUptime(containerInfoUI.startedAt);
+    return moment(containerInfoUI.startedAt).toDate();
   }
 
   getImage(containerInfo: ContainerInfo): string {
@@ -129,6 +138,18 @@ export class ContainerUtils {
     return containerInfo.engineName;
   }
 
+  getImageHref(containerInfo: ContainerInfo): string {
+    const repoTag = containerInfo.ImageBase64RepoTag
+      ? Buffer.from(containerInfo.ImageBase64RepoTag, 'base64').toString()
+      : '';
+    const shortUrl = `/images/${containerInfo.ImageID}/${containerInfo.engineId}`;
+    if (repoTag.startsWith('sha256:') || repoTag === '') {
+      return shortUrl;
+    } else {
+      return `${shortUrl}/${containerInfo.ImageBase64RepoTag}/summary`;
+    }
+  }
+
   getContainerInfoUI(
     containerInfo: ContainerInfo,
     context?: ContextUI,
@@ -156,9 +177,9 @@ export class ContainerUtils {
       selected: false,
       created: containerInfo.Created,
       labels: containerInfo.Labels,
-      icon: this.iconClass(containerInfo, context, viewContributions) || ContainerIcon,
+      icon: this.iconClass(containerInfo, context, viewContributions) ?? ContainerIcon,
       imageBase64RepoTag: containerInfo.ImageBase64RepoTag,
-      imageHref: `/images/${containerInfo.ImageID.startsWith('sha256:') ? containerInfo.ImageID.slice(7) : containerInfo.ImageID}/${containerInfo.engineId}/${containerInfo.ImageBase64RepoTag}/summary`,
+      imageHref: this.getImageHref(containerInfo),
     };
   }
 
@@ -181,7 +202,7 @@ export class ContainerUtils {
         name: podInfo.name,
         type: ContainerGroupInfoTypeUI.POD,
         id: podInfo.id,
-        status: (podInfo.status || '').toUpperCase(),
+        status: (podInfo.status ?? '').toUpperCase(),
         engineId: containerInfo.engineId,
         engineType: containerInfo.engineType,
       };
@@ -191,7 +212,7 @@ export class ContainerUtils {
     return {
       name: this.getName(containerInfo),
       type: ContainerGroupInfoTypeUI.STANDALONE,
-      status: (containerInfo.Status || '').toUpperCase(),
+      status: (containerInfo.Status ?? '').toUpperCase(),
       engineType: containerInfo.engineType,
     };
   }
@@ -332,5 +353,13 @@ export class ContainerUtils {
       .split(' ')
       .filter(part => !part.startsWith('is:'))
       .join(' ');
+  }
+
+  isContainerGroupInfoUI(object: ContainerInfoUI | ContainerGroupInfoUI): object is ContainerGroupInfoUI {
+    return 'type' in object && typeof object.type === 'string';
+  }
+
+  isContainerInfoUI(object: ContainerInfoUI | ContainerGroupInfoUI): object is ContainerInfoUI {
+    return 'state' in object && typeof object.state === 'string';
   }
 }

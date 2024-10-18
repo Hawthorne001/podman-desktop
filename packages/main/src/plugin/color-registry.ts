@@ -18,25 +18,26 @@
 
 import type * as extensionApi from '@podman-desktop/api';
 
-import { AppearanceSettings } from '/@/plugin/appearance-settings.js';
-import type { ConfigurationRegistry } from '/@/plugin/configuration-registry.js';
-import type { AnalyzedExtension } from '/@/plugin/extension-loader.js';
-import { Disposable } from '/@/plugin/types/disposable.js';
-import type { Color, ColorDefinition, ColorInfo } from '/@api/color-info.js';
+import type { ColorDefinition, ColorInfo } from '/@api/color-info.js';
 import type { RawThemeContribution } from '/@api/theme-info.js';
 
 import colorPalette from '../../../../tailwind-color-palette.json';
+import { isWindows } from '../util.js';
 import type { ApiSenderType } from './api.js';
+import { AppearanceSettings } from './appearance-settings.js';
+import type { ConfigurationRegistry } from './configuration-registry.js';
+import type { AnalyzedExtension } from './extension-loader.js';
+import { Disposable } from './types/disposable.js';
 
 export class ColorRegistry {
-  #apiSender: ApiSenderType;
-  #configurationRegistry: ConfigurationRegistry;
+  #apiSender: ApiSenderType | undefined;
+  #configurationRegistry: ConfigurationRegistry | undefined;
   #definitions: Map<string, ColorDefinition>;
   #initDone = false;
-  #themes: Map<string, Map<string, Color>>;
+  #themes: Map<string, Map<string, string>>;
   #parentThemes: Map<string, string>;
 
-  constructor(apiSender: ApiSenderType, configurationRegistry: ConfigurationRegistry) {
+  constructor(apiSender?: ApiSenderType, configurationRegistry?: ConfigurationRegistry) {
     this.#apiSender = apiSender;
     this.#configurationRegistry = configurationRegistry;
     this.#definitions = new Map();
@@ -89,14 +90,14 @@ export class ColorRegistry {
       const parentTheme = this.#themes.get(parent);
 
       // register theme
-      const colorMap = new Map<string, Color>();
+      const colorMap = new Map<string, string>();
       this.#themes.set(theme.id, colorMap);
 
       // iterate over all color definitions and register either default or provided color
       for (const colorDefinitionId of this.#definitions.keys()) {
         // get the color from the theme
         // need to convert kebab-case to camelCase as in json it's contributed with camelCase
-        const camelCaseColorDefinitionId = colorDefinitionId.replace(/-([a-z])/g, g => g[1].toUpperCase());
+        const camelCaseColorDefinitionId = colorDefinitionId.replace(/-([a-z])/g, g => (g[1] ?? '').toUpperCase());
         let color: string | undefined = theme.colors[camelCaseColorDefinitionId];
         if (!color) {
           color = parentTheme?.get(colorDefinitionId);
@@ -109,7 +110,7 @@ export class ColorRegistry {
     const themeIds = themes.map(t => t.id);
 
     // update configuration
-    const disposeConfiguration = this.#configurationRegistry.addConfigurationEnum(
+    const disposeConfiguration = this.#configurationRegistry?.addConfigurationEnum(
       AppearanceSettings.SectionName + '.' + AppearanceSettings.Appearance,
       themeIds,
       AppearanceSettings.SystemEnumValue,
@@ -122,9 +123,13 @@ export class ColorRegistry {
           this.#themes.delete(themeId);
         }
         // remove from configuration
-        disposeConfiguration.dispose();
+        disposeConfiguration?.dispose();
       },
     };
+  }
+
+  public listThemes(): string[] {
+    return Array.from(this.#themes.keys());
   }
 
   protected registerColor(colorId: string, definition: ColorDefinition): void {
@@ -195,13 +200,13 @@ export class ColorRegistry {
   protected notifyUpdate(): void {
     // notify only if ended the initialization
     if (this.#initDone) {
-      this.#apiSender.send('color-updated');
+      this.#apiSender?.send('color-updated');
     }
   }
 
   protected trackChanges(): void {
     // add listener on the configuration change for the theme
-    this.#configurationRegistry.onDidChangeConfiguration(async e => {
+    this.#configurationRegistry?.onDidChangeConfiguration(async e => {
       if (e.key === `${AppearanceSettings.SectionName}.${AppearanceSettings.Appearance}`) {
         // refresh the colors
         this.notifyUpdate();
@@ -224,6 +229,8 @@ export class ColorRegistry {
   }
 
   protected initColors(): void {
+    this.initDefaults();
+    this.initNotificationDot();
     this.initGlobalNav();
     this.initSecondaryNav();
     this.initTitlebar();
@@ -239,6 +246,33 @@ export class ColorRegistry {
     this.initModal();
     this.initLink();
     this.initButton();
+    this.initActionButton();
+    this.initTooltip();
+    this.initDropdown();
+    this.initLabel();
+    this.initStatusColors();
+    this.initStatusBar();
+    this.initOnboarding();
+    this.initStates();
+    this.initFiles();
+    this.initTerminal();
+  }
+
+  protected initDefaults(): void {
+    const def = 'default-';
+
+    // Global default colors
+    this.registerColor(`${def}text`, {
+      dark: colorPalette.white,
+      light: colorPalette.charcoal[900],
+    });
+  }
+
+  protected initNotificationDot(): void {
+    this.registerColor('notification-dot', {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[600],
+    });
   }
 
   protected initGlobalNav(): void {
@@ -249,9 +283,9 @@ export class ColorRegistry {
       dark: colorPalette.charcoal[600],
       light: colorPalette.gray[100],
     });
-    this.registerColor(`${glNav}icon-notification-dot`, {
-      dark: colorPalette.purple[500],
-      light: colorPalette.purple[600],
+    this.registerColor(`${glNav}bg-border`, {
+      dark: colorPalette.charcoal[500],
+      light: colorPalette.gray[300],
     });
     this.registerColor(`${glNav}icon`, {
       dark: colorPalette.gray[600],
@@ -267,7 +301,7 @@ export class ColorRegistry {
     });
     this.registerColor(`${glNav}icon-inset-bg`, {
       dark: colorPalette.charcoal[800],
-      light: colorPalette.dustypurple[200],
+      light: colorPalette.gray[300],
     });
     this.registerColor(`${glNav}icon-selected`, {
       dark: colorPalette.white,
@@ -275,7 +309,7 @@ export class ColorRegistry {
     });
     this.registerColor(`${glNav}icon-selected-bg`, {
       dark: colorPalette.charcoal[500],
-      light: colorPalette.purple[300],
+      light: colorPalette.gray[300],
     });
     this.registerColor(`${glNav}icon-selected-highlight`, {
       dark: colorPalette.purple[500],
@@ -285,7 +319,7 @@ export class ColorRegistry {
 
   protected initTitlebar(): void {
     this.registerColor('titlebar-bg', {
-      dark: colorPalette.charcoal[900],
+      dark: isWindows() ? '#202020' : colorPalette.charcoal[900],
       light: colorPalette.gray[50],
     });
 
@@ -298,6 +332,15 @@ export class ColorRegistry {
       dark: colorPalette.white,
       light: colorPalette.purple[900],
     });
+
+    this.registerColor('titlebar-windows-hover-exit-bg', {
+      dark: '#c42b1c',
+      light: '#c42b1c',
+    });
+    this.registerColor('titlebar-windows-hover-bg', {
+      dark: '#2d2d2d',
+      light: '#dfdfdf',
+    });
   }
 
   // secondary nav (settings)
@@ -306,7 +349,7 @@ export class ColorRegistry {
 
     this.registerColor(`${sNav}bg`, {
       dark: colorPalette.charcoal[700],
-      light: colorPalette.dustypurple[100],
+      light: colorPalette.gray[100],
     });
 
     this.registerColor(`${sNav}header-text`, {
@@ -331,20 +374,15 @@ export class ColorRegistry {
 
     this.registerColor(`${sNav}text-selected`, {
       dark: colorPalette.white,
-      light: colorPalette.purple[800],
+      light: colorPalette.black,
     });
 
     this.registerColor(`${sNav}selected-bg`, {
       dark: colorPalette.charcoal[500],
-      light: colorPalette.purple[300],
+      light: colorPalette.gray[300],
     });
 
     this.registerColor(`${sNav}selected-highlight`, {
-      dark: colorPalette.purple[500],
-      light: colorPalette.purple[600],
-    });
-
-    this.registerColor(`${sNav}icon-notification-dot`, {
       dark: colorPalette.purple[500],
       light: colorPalette.purple[600],
     });
@@ -376,7 +414,7 @@ export class ColorRegistry {
     const invCt = 'invert-content-';
     this.registerColor(`${invCt}bg`, {
       dark: colorPalette.charcoal[800],
-      light: colorPalette.gray[50],
+      light: colorPalette.gray[25],
     });
 
     this.registerColor(`${invCt}header-text`, {
@@ -391,7 +429,7 @@ export class ColorRegistry {
 
     this.registerColor(`${invCt}card-bg`, {
       dark: colorPalette.charcoal[600],
-      light: colorPalette.gray[300],
+      light: colorPalette.gray[100],
     });
 
     this.registerColor(`${invCt}card-header-text`, {
@@ -437,6 +475,11 @@ export class ColorRegistry {
       light: colorPalette.charcoal[900],
     });
 
+    this.registerColor(`${ct}text`, {
+      dark: colorPalette.gray[700],
+      light: colorPalette.gray[900],
+    });
+
     this.registerColor(`${ct}sub-header`, {
       dark: colorPalette.gray[900],
       light: colorPalette.purple[900],
@@ -449,17 +492,22 @@ export class ColorRegistry {
 
     this.registerColor(`${ct}card-header-text`, {
       dark: colorPalette.gray[100],
-      light: colorPalette.charcoal[900],
+      light: colorPalette.purple[900],
     });
 
     this.registerColor(`${ct}card-bg`, {
       dark: colorPalette.charcoal[800],
-      light: colorPalette.gray[50],
+      light: colorPalette.gray[25],
     });
 
     this.registerColor(`${ct}card-hover-bg`, {
       dark: colorPalette.charcoal[500],
-      light: colorPalette.purple[200],
+      light: colorPalette.gray[300],
+    });
+
+    this.registerColor(`${ct}card-selected-bg`, {
+      dark: colorPalette.charcoal[400],
+      light: colorPalette.purple[100],
     });
 
     this.registerColor(`${ct}card-text`, {
@@ -482,9 +530,14 @@ export class ColorRegistry {
       light: colorPalette.dustypurple[200],
     });
 
+    this.registerColor(`${ct}card-hover-inset-bg`, {
+      dark: colorPalette.charcoal[700],
+      light: colorPalette.dustypurple[300],
+    });
+
     this.registerColor(`${ct}bg`, {
       dark: colorPalette.charcoal[700],
-      light: colorPalette.gray[300],
+      light: colorPalette.gray[100],
     });
 
     this.registerColor(`${ct}card-icon`, {
@@ -499,12 +552,12 @@ export class ColorRegistry {
 
     this.registerColor(`${ct}card-carousel-card-bg`, {
       dark: colorPalette.charcoal[600],
-      light: colorPalette.gray[300],
+      light: colorPalette.gray[200],
     });
 
     this.registerColor(`${ct}card-carousel-card-hover-bg`, {
       dark: colorPalette.charcoal[500],
-      light: colorPalette.gray[200],
+      light: colorPalette.gray[100],
     });
 
     this.registerColor(`${ct}card-carousel-card-header-text`, {
@@ -514,22 +567,32 @@ export class ColorRegistry {
 
     this.registerColor(`${ct}card-carousel-card-text`, {
       dark: colorPalette.gray[400],
-      light: colorPalette.purple[900],
+      light: colorPalette.charcoal[500],
     });
 
     this.registerColor(`${ct}card-carousel-nav`, {
       dark: colorPalette.gray[800],
-      light: colorPalette.gray[400],
+      light: colorPalette.gray[300],
     });
 
     this.registerColor(`${ct}card-carousel-hover-nav`, {
       dark: colorPalette.gray[600],
-      light: colorPalette.gray[600],
+      light: colorPalette.gray[500],
     });
 
     this.registerColor(`${ct}card-carousel-disabled-nav`, {
       dark: colorPalette.charcoal[700],
       light: colorPalette.gray[200],
+    });
+
+    this.registerColor(`${ct}card-border`, {
+      dark: colorPalette.charcoal[700],
+      light: colorPalette.gray[200],
+    });
+
+    this.registerColor(`${ct}card-border-selected`, {
+      dark: colorPalette.dustypurple[700],
+      light: colorPalette.purple[600],
     });
   }
 
@@ -546,8 +609,8 @@ export class ColorRegistry {
       light: colorPalette.gray[100],
     });
     this.registerColor(`${sNav}disabled-bg`, {
-      dark: colorPalette.charcoal[900],
-      light: colorPalette.charcoal[900],
+      dark: colorPalette.transparent,
+      light: colorPalette.transparent,
     });
     this.registerColor(`${sNav}hover-bg`, {
       dark: colorPalette.transparent,
@@ -555,31 +618,31 @@ export class ColorRegistry {
     });
     this.registerColor(`${sNav}focused-text`, {
       dark: colorPalette.white,
-      light: colorPalette.gray[900],
+      light: colorPalette.charcoal[900],
     });
     this.registerColor(`${sNav}error-text`, {
       dark: colorPalette.red[500],
       light: colorPalette.red[500],
     });
     this.registerColor(`${sNav}disabled-text`, {
-      dark: colorPalette.gray[900],
-      light: colorPalette.gray[900],
+      dark: colorPalette.charcoal[100],
+      light: colorPalette.gray[700],
     });
     this.registerColor(`${sNav}hover-text`, {
-      dark: colorPalette.gray[900],
-      light: colorPalette.gray[900],
+      dark: colorPalette.gray[700],
+      light: colorPalette.charcoal[200],
     });
     this.registerColor(`${sNav}placeholder-text`, {
-      dark: colorPalette.gray[900],
-      light: colorPalette.gray[900],
+      dark: colorPalette.gray[700],
+      light: colorPalette.charcoal[200],
     });
     this.registerColor(`${sNav}stroke`, {
       dark: colorPalette.charcoal[400],
-      light: colorPalette.charcoal[400],
+      light: colorPalette.gray[700],
     });
     this.registerColor(`${sNav}hover-stroke`, {
       dark: colorPalette.purple[400],
-      light: colorPalette.purple[400],
+      light: colorPalette.purple[500],
     });
     this.registerColor(`${sNav}stroke-error`, {
       dark: colorPalette.red[500],
@@ -590,20 +653,20 @@ export class ColorRegistry {
       light: colorPalette.charcoal[100],
     });
     this.registerColor(`${sNav}icon`, {
-      dark: colorPalette.gray[500],
-      light: colorPalette.gray[500],
+      dark: colorPalette.gray[700],
+      light: colorPalette.charcoal[200],
     });
     this.registerColor(`${sNav}focused-icon`, {
       dark: colorPalette.gray[500],
-      light: colorPalette.gray[500],
+      light: colorPalette.purple[600],
     });
     this.registerColor(`${sNav}disabled-icon`, {
-      dark: colorPalette.gray[500],
-      light: colorPalette.gray[500],
+      dark: colorPalette.charcoal[100],
+      light: colorPalette.gray[700],
     });
     this.registerColor(`${sNav}hover-icon`, {
-      dark: colorPalette.gray[500],
-      light: colorPalette.gray[500],
+      dark: colorPalette.gray[700],
+      light: colorPalette.purple[600],
     });
   }
 
@@ -650,32 +713,36 @@ export class ColorRegistry {
       light: colorPalette.gray[900],
     });
     this.registerColor(`${sNav}off-focused-bg`, {
-      dark: colorPalette.purple[700],
-      light: colorPalette.purple[700],
+      dark: colorPalette.gray[800],
+      light: colorPalette.gray[800],
     });
     this.registerColor(`${sNav}on-bg`, {
       dark: colorPalette.purple[500],
-      light: colorPalette.purple[500],
+      light: colorPalette.purple[600],
     });
     this.registerColor(`${sNav}on-focused-bg`, {
       dark: colorPalette.purple[400],
-      light: colorPalette.purple[600],
+      light: colorPalette.purple[500],
     });
     this.registerColor(`${sNav}switch`, {
       dark: colorPalette.white,
-      light: colorPalette.black,
+      light: colorPalette.white,
     });
     this.registerColor(`${sNav}focused-switch`, {
       dark: colorPalette.white,
-      light: colorPalette.black,
+      light: colorPalette.white,
     });
     this.registerColor(`${sNav}on-text`, {
-      dark: colorPalette.white,
-      light: colorPalette.black,
+      dark: colorPalette.gray[300],
+      light: colorPalette.charcoal[700],
     });
     this.registerColor(`${sNav}off-text`, {
+      dark: colorPalette.gray[300],
+      light: colorPalette.charcoal[700],
+    });
+    this.registerColor(`${sNav}disabled-text`, {
       dark: colorPalette.gray[700],
-      light: colorPalette.gray[900],
+      light: colorPalette.charcoal[200],
     });
     this.registerColor(`${sNav}off-disabled-bg`, {
       dark: colorPalette.charcoal[900],
@@ -686,8 +753,8 @@ export class ColorRegistry {
       light: colorPalette.gray[900],
     });
     this.registerColor(`${sNav}disabled-switch`, {
-      dark: colorPalette.gray[900],
-      light: colorPalette.charcoal[900],
+      dark: colorPalette.gray[200],
+      light: colorPalette.gray[200],
     });
   }
 
@@ -707,12 +774,12 @@ export class ColorRegistry {
     // color for most text in tables
     this.registerColor(`${tab}body-text`, {
       dark: colorPalette.gray[700],
-      light: colorPalette.charcoal[300],
+      light: colorPalette.charcoal[100],
     });
     // color for the text in the main column of the table (generally Name)
     this.registerColor(`${tab}body-text-highlight`, {
       dark: colorPalette.gray[300],
-      light: colorPalette.charcoal[300],
+      light: colorPalette.charcoal[700],
     });
     // color for the text in second line of main column, in secondary color (generally IDs)
     this.registerColor(`${tab}body-text-sub-secondary`, {
@@ -755,6 +822,18 @@ export class ColorRegistry {
     this.registerColor(`${details}bg`, {
       dark: colorPalette.charcoal[900],
       light: colorPalette.gray[50],
+    });
+    this.registerColor(`${details}card-bg`, {
+      dark: colorPalette.charcoal[600],
+      light: colorPalette.gray[300],
+    });
+    this.registerColor(`${details}card-header`, {
+      dark: colorPalette.gray[700],
+      light: colorPalette.charcoal[300],
+    });
+    this.registerColor(`${details}card-text`, {
+      dark: colorPalette.white,
+      light: colorPalette.charcoal[900],
     });
   }
 
@@ -814,14 +893,6 @@ export class ColorRegistry {
       dark: colorPalette.purple[700],
       light: colorPalette.purple[300],
     });
-    this.registerColor(`${modal}error-text`, {
-      dark: colorPalette.red[500],
-      light: colorPalette.red[500],
-    });
-    this.registerColor(`${modal}warning-text`, {
-      dark: colorPalette.amber[400],
-      light: colorPalette.amber[400],
-    });
   }
 
   // links
@@ -863,8 +934,8 @@ export class ColorRegistry {
       light: colorPalette.white,
     });
     this.registerColor(`${button}disabled`, {
-      dark: colorPalette.charcoal[50],
-      light: colorPalette.gray[900],
+      dark: colorPalette.charcoal[300],
+      light: colorPalette.gray[600],
     });
     this.registerColor(`${button}disabled-text`, {
       dark: colorPalette.charcoal[50],
@@ -903,8 +974,8 @@ export class ColorRegistry {
       light: colorPalette.transparent,
     });
     this.registerColor(`${button}tab-border`, {
-      dark: colorPalette.charcoal[700],
-      light: colorPalette.gray[400],
+      dark: colorPalette.transparent,
+      light: colorPalette.transparent,
     });
     this.registerColor(`${button}tab-border-selected`, {
       dark: colorPalette.purple[500],
@@ -912,11 +983,15 @@ export class ColorRegistry {
     });
     this.registerColor(`${button}tab-hover-border`, {
       dark: colorPalette.charcoal[100],
-      light: colorPalette.black,
+      light: colorPalette.gray[600],
     });
     this.registerColor(`${button}tab-text`, {
       dark: colorPalette.gray[600],
       light: colorPalette.charcoal[200],
+    });
+    this.registerColor(`${button}tab-text-selected`, {
+      dark: colorPalette.white,
+      light: colorPalette.black,
     });
     this.registerColor(`${button}link-text`, {
       dark: colorPalette.purple[400],
@@ -925,6 +1000,432 @@ export class ColorRegistry {
     this.registerColor(`${button}link-hover-bg`, {
       dark: colorPalette.white + '2',
       light: colorPalette.black + '2',
+    });
+    this.registerColor(`${button}help-link-text`, {
+      dark: colorPalette.gray[100],
+      light: colorPalette.charcoal[900],
+    });
+  }
+
+  protected initActionButton(): void {
+    const ab = 'action-button-';
+
+    this.registerColor(`${ab}text`, {
+      dark: colorPalette.gray[400],
+      light: colorPalette.charcoal[500],
+    });
+    this.registerColor(`${ab}bg`, {
+      dark: colorPalette.charcoal[900],
+      light: colorPalette.gray[400],
+    });
+    this.registerColor(`${ab}hover-bg`, {
+      dark: colorPalette.charcoal[600],
+      light: colorPalette.gray[50],
+    });
+    this.registerColor(`${ab}hover-text`, {
+      dark: colorPalette.purple[600],
+      light: colorPalette.purple[500],
+    });
+
+    this.registerColor(`${ab}primary-text`, {
+      dark: colorPalette.purple[600],
+      light: colorPalette.purple[600],
+    });
+    this.registerColor(`${ab}primary-hover-text`, {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[500],
+    });
+
+    this.registerColor(`${ab}disabled-text`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.gray[900],
+    });
+
+    this.registerColor(`${ab}details-text`, {
+      dark: colorPalette.gray[400],
+      light: colorPalette.charcoal[900],
+    });
+    this.registerColor(`${ab}details-bg`, {
+      dark: colorPalette.charcoal[800],
+      light: colorPalette.gray[50],
+    });
+    this.registerColor(`${ab}details-hover-text`, {
+      dark: colorPalette.purple[600],
+      light: colorPalette.purple[500],
+    });
+
+    this.registerColor(`${ab}details-disabled-text`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.gray[900],
+    });
+    this.registerColor(`${ab}details-disabled-bg`, {
+      dark: colorPalette.charcoal[800],
+      light: colorPalette.gray[50],
+    });
+
+    this.registerColor(`${ab}spinner`, {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[500],
+    });
+  }
+
+  // tooltip
+  protected initTooltip(): void {
+    const tooltip = 'tooltip-';
+
+    this.registerColor(`${tooltip}bg`, {
+      dark: colorPalette.charcoal[800],
+      light: colorPalette.gray[50],
+    });
+    this.registerColor(`${tooltip}text`, {
+      dark: colorPalette.white,
+      light: colorPalette.black,
+    });
+    this.registerColor(`${tooltip}border`, {
+      dark: colorPalette.charcoal[500],
+      light: colorPalette.gray[500],
+    });
+  }
+
+  protected initDropdown(): void {
+    const dropdown = 'dropdown-';
+    const select = 'select-';
+    const modal = 'modal-';
+    const input = 'input-';
+
+    this.registerColor(`${dropdown}bg`, {
+      dark: colorPalette.charcoal[600],
+      light: colorPalette.gray[100],
+    });
+    this.registerColor(`${select}bg`, {
+      dark: colorPalette.charcoal[800],
+      light: colorPalette.gray[300],
+    });
+    this.registerColor(`${dropdown}ring`, {
+      dark: colorPalette.purple[900],
+      light: colorPalette.gray[500],
+    });
+    this.registerColor(`${dropdown}hover-ring`, {
+      dark: colorPalette.purple[700],
+      light: colorPalette.purple[300],
+    });
+    this.registerColor(`${dropdown}divider`, {
+      dark: colorPalette.charcoal[600],
+      light: colorPalette.gray[100],
+    });
+
+    this.registerColor(`${dropdown}item-text`, {
+      dark: colorPalette.gray[400],
+      light: colorPalette.charcoal[600],
+    });
+    this.registerColor(`${dropdown}item-hover-bg`, {
+      dark: colorPalette.black,
+      light: colorPalette.gray[300],
+    });
+    this.registerColor(`${dropdown}item-hover-text`, {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[500],
+    });
+
+    this.registerColor(`${dropdown}disabled-item-text`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.charcoal[100],
+    });
+    this.registerColor(`${dropdown}disabled-item-bg`, {
+      dark: colorPalette.charcoal[800],
+      light: colorPalette.gray[200],
+    });
+
+    this.registerColor(`${modal}${dropdown}highlight`, {
+      dark: colorPalette.purple[600],
+      light: colorPalette.purple[300],
+    });
+    this.registerColor(`${modal}${dropdown}text`, {
+      dark: colorPalette.white,
+      light: colorPalette.charcoal[900],
+    });
+    this.registerColor(`${input}${select}hover-text`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.charcoal[200],
+    });
+  }
+
+  // labels
+  protected initLabel(): void {
+    const label = 'label-';
+
+    this.registerColor(`${label}bg`, {
+      dark: colorPalette.charcoal[500],
+      light: colorPalette.purple[200],
+    });
+    this.registerColor(`${label}text`, {
+      dark: colorPalette.gray[500],
+      light: colorPalette.charcoal[300],
+    });
+  }
+
+  protected initStatusColors(): void {
+    const status = 'status-';
+
+    // Podman & Kubernetes
+    this.registerColor(`${status}running`, {
+      dark: colorPalette.green[500],
+      light: colorPalette.green[600],
+    });
+    // Kubernetes only
+    this.registerColor(`${status}terminated`, {
+      dark: colorPalette.red[500],
+      light: colorPalette.red[700],
+    });
+    this.registerColor(`${status}waiting`, {
+      dark: colorPalette.amber[600],
+      light: colorPalette.amber[600],
+    });
+    // Podman only
+    this.registerColor(`${status}starting`, {
+      dark: colorPalette.green[500],
+      light: colorPalette.green[600],
+    });
+    // Stopped & Exited are the same color / same thing in the eyes of statuses
+    this.registerColor(`${status}stopped`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.charcoal[200],
+    });
+    this.registerColor(`${status}exited`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.charcoal[200],
+    });
+    this.registerColor(`${status}not-running`, {
+      dark: colorPalette.gray[700],
+      light: colorPalette.gray[900],
+    });
+    // "Warning"
+    this.registerColor(`${status}paused`, {
+      dark: colorPalette.amber[600],
+      light: colorPalette.amber[600],
+    });
+    this.registerColor(`${status}degraded`, {
+      dark: colorPalette.amber[700],
+      light: colorPalette.amber[700],
+    });
+    // Others
+    this.registerColor(`${status}created`, {
+      dark: colorPalette.green[300],
+      light: colorPalette.green[300],
+    });
+    this.registerColor(`${status}dead`, {
+      dark: colorPalette.red[500],
+      light: colorPalette.red[700],
+    });
+    // If we don't know the status, use gray
+    this.registerColor(`${status}unknown`, {
+      dark: colorPalette.gray[100],
+      light: colorPalette.gray[400],
+    });
+    // Connections / login
+    this.registerColor(`${status}connected`, {
+      dark: colorPalette.green[600],
+      light: colorPalette.green[600],
+    });
+    this.registerColor(`${status}disconnected`, {
+      dark: colorPalette.gray[500],
+      light: colorPalette.gray[800],
+    });
+    // Scaled / updated, use blue as it's a 'neutral' color
+    // to indicate that it's informative but not a problem
+    this.registerColor(`${status}updated`, {
+      dark: colorPalette.sky[500],
+      light: colorPalette.sky[500],
+    });
+    this.registerColor(`${status}ready`, {
+      dark: colorPalette.gray[900],
+      light: colorPalette.gray[100],
+    });
+
+    // contrast color for the other status colors,
+    // e.g. to use in status icons
+    this.registerColor(`${status}contrast`, {
+      dark: colorPalette.white,
+      light: colorPalette.white,
+    });
+  }
+
+  protected initStatusBar(): void {
+    const statusbar = 'statusbar-';
+    this.registerColor(`${statusbar}bg`, {
+      dark: colorPalette.purple[900],
+      light: colorPalette.purple[900],
+    });
+
+    this.registerColor(`${statusbar}hover-bg`, {
+      dark: colorPalette.purple[800],
+      light: colorPalette.purple[800],
+    });
+
+    this.registerColor(`${statusbar}text`, {
+      dark: colorPalette.white,
+      light: colorPalette.white,
+    });
+  }
+
+  protected initOnboarding(): void {
+    const onboarding = 'onboarding-';
+    this.registerColor(`${onboarding}active-dot-bg`, {
+      dark: colorPalette.purple[700],
+      light: colorPalette.purple[700],
+    });
+
+    this.registerColor(`${onboarding}active-dot-border`, {
+      dark: colorPalette.purple[700],
+      light: colorPalette.purple[700],
+    });
+
+    this.registerColor(`${onboarding}inactive-dot-bg`, {
+      dark: colorPalette.transparent,
+      light: colorPalette.transparent,
+    });
+
+    this.registerColor(`${onboarding}inactive-dot-border`, {
+      dark: colorPalette.gray[700],
+      light: colorPalette.gray[700],
+    });
+  }
+
+  protected initStates(): void {
+    const state = 'state-';
+
+    // general error and warning states
+    this.registerColor(`${state}success`, {
+      dark: colorPalette.green[500],
+      light: colorPalette.green[600],
+    });
+    this.registerColor(`${state}warning`, {
+      dark: colorPalette.amber[500],
+      light: colorPalette.amber[600],
+    });
+    this.registerColor(`${state}error`, {
+      dark: colorPalette.red[500],
+      light: colorPalette.red[600],
+    });
+    this.registerColor(`${state}info`, {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[600],
+    });
+  }
+
+  // colors for image files explorer
+  protected initFiles(): void {
+    const fc = 'files-';
+    this.registerColor(`${fc}hidden`, {
+      dark: colorPalette.red[500],
+      light: colorPalette.red[500],
+    });
+    this.registerColor(`${fc}directory`, {
+      dark: colorPalette.sky[500],
+      light: colorPalette.sky[500],
+    });
+    this.registerColor(`${fc}symlink`, {
+      dark: colorPalette.sky[300],
+      light: colorPalette.sky[300],
+    });
+    this.registerColor(`${fc}executable`, {
+      dark: colorPalette.green[500],
+      light: colorPalette.green[500],
+    });
+  }
+
+  // terminal colours
+  protected initTerminal(): void {
+    const terminal = 'terminal-';
+
+    this.registerColor(`${terminal}foreground`, {
+      dark: colorPalette.white,
+      light: colorPalette.black,
+    });
+
+    this.registerColor(`${terminal}background`, {
+      dark: colorPalette.black,
+      light: colorPalette.white,
+    });
+
+    this.registerColor(`${terminal}cursor`, {
+      dark: colorPalette.white,
+      light: colorPalette.black,
+    });
+
+    this.registerColor(`${terminal}selectionBackground`, {
+      dark: colorPalette.white,
+      light: colorPalette.black,
+    });
+
+    this.registerColor(`${terminal}selectionForeground`, {
+      dark: colorPalette.black,
+      light: colorPalette.white,
+    });
+
+    this.registerColor(`${terminal}ansiBlack`, {
+      dark: colorPalette.black,
+      light: colorPalette.black,
+    });
+    this.registerColor(`${terminal}ansiRed`, {
+      dark: colorPalette.red[500],
+      light: colorPalette.red[500],
+    });
+    this.registerColor(`${terminal}ansiGreen`, {
+      dark: colorPalette.green[500],
+      light: colorPalette.green[500],
+    });
+    this.registerColor(`${terminal}ansiYellow`, {
+      dark: colorPalette.amber[500],
+      light: colorPalette.amber[500],
+    });
+    this.registerColor(`${terminal}ansiBlue`, {
+      dark: colorPalette.sky[500],
+      light: colorPalette.sky[500],
+    });
+    this.registerColor(`${terminal}ansiMagenta`, {
+      dark: colorPalette.purple[500],
+      light: colorPalette.purple[500],
+    });
+    this.registerColor(`${terminal}ansiCyan`, {
+      dark: colorPalette.sky[500],
+      light: colorPalette.sky[500],
+    });
+    this.registerColor(`${terminal}ansiWhite`, {
+      dark: colorPalette.white,
+      light: colorPalette.white,
+    });
+    this.registerColor(`${terminal}ansiBrightBlack`, {
+      dark: colorPalette.gray[500],
+      light: colorPalette.gray[500],
+    });
+    this.registerColor(`${terminal}ansiBrightRed`, {
+      dark: colorPalette.red[600],
+      light: colorPalette.red[600],
+    });
+    this.registerColor(`${terminal}ansiBrightGreen`, {
+      dark: colorPalette.green[600],
+      light: colorPalette.green[600],
+    });
+    this.registerColor(`${terminal}ansiBrightYellow`, {
+      dark: colorPalette.amber[600],
+      light: colorPalette.amber[600],
+    });
+    this.registerColor(`${terminal}ansiBrightBlue`, {
+      dark: colorPalette.sky[600],
+      light: colorPalette.sky[600],
+    });
+    this.registerColor(`${terminal}ansiBrightMagenta`, {
+      dark: colorPalette.purple[600],
+      light: colorPalette.purple[600],
+    });
+    this.registerColor(`${terminal}ansiBrightCyan`, {
+      dark: colorPalette.sky[600],
+      light: colorPalette.sky[600],
+    });
+    this.registerColor(`${terminal}ansiBrightWhite`, {
+      dark: colorPalette.white,
+      light: colorPalette.white,
     });
   }
 }

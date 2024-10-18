@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import '@testing-library/jest-dom/vitest';
 import type { ProviderStatus } from '@podman-desktop/api';
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { tick } from 'svelte';
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { providerInfos } from '/@/stores/providers';
@@ -32,6 +33,7 @@ import type { ProviderContainerConnectionInfo, ProviderInfo } from '/@api/provid
 import PullImage from './PullImage.svelte';
 
 const pullImageMock = vi.fn();
+const resolveShortnameImageMock = vi.fn();
 
 // fake the window.events object
 beforeAll(() => {
@@ -47,6 +49,7 @@ beforeAll(() => {
     addListener: vi.fn(),
   });
   (window as any).pullImage = pullImageMock;
+  (window as any).resolveShortnameImage = resolveShortnameImageMock.mockResolvedValue(['docker.io/test1']);
 
   Object.defineProperty(window, 'matchMedia', {
     value: () => {
@@ -71,6 +74,7 @@ function setup() {
   const pStatus: ProviderStatus = 'started';
   const pInfo: ProviderContainerConnectionInfo = {
     name: 'test',
+    displayName: 'test',
     status: 'started',
     endpoint: {
       socketPath: '',
@@ -127,7 +131,7 @@ describe('PullImage', () => {
     expect(button).toBeEnabled();
   });
 
-  test('Expect that valid entry enables button', async () => {
+  test('Expect that valid entry enables button after user input', async () => {
     setup();
     render(PullImage);
 
@@ -135,7 +139,7 @@ describe('PullImage', () => {
     expect(button).toBeInTheDocument();
     expect(button).toBeDisabled();
 
-    const textbox = screen.getByRole('textbox', { name: 'imageName' });
+    const textbox = screen.getByRole('textbox', { name: 'Image to Pull' });
     await userEvent.click(textbox);
     await userEvent.paste('some-valid-image');
 
@@ -172,7 +176,7 @@ describe('PullImage', () => {
     setup();
     render(PullImage);
 
-    const pullImageInput = screen.getByRole('textbox', { name: 'imageName' });
+    const pullImageInput = screen.getByRole('textbox', { name: 'Image to Pull' });
     expect(pullImageInput.matches(':focus')).toBe(true);
   });
 
@@ -212,7 +216,7 @@ describe('PullImage', () => {
     expect(errorMesssage).toHaveTextContent('Image does not exists');
 
     // ok, now choose a valid image name
-    renderResult.component.$$set({ imageToPull: 'some-valid-image' });
+    renderResult.rerender({ imageToPull: 'some-valid-image' });
 
     // pull image again
     const pullImagebutton2 = screen.getByRole('button', { name: 'Pull image' });
@@ -259,4 +263,75 @@ describe('PullImage', () => {
     expect(proposal).toBeInTheDocument();
     expect(proposal).toBeEnabled();
   });
+});
+
+test('Expect if no docker.io shortname to use Podman FQN', async () => {
+  resolveShortnameImageMock.mockResolvedValue(['someregistry/test1']);
+  setup();
+  render(PullImage);
+
+  const textbox = screen.getByRole('textbox', { name: 'Image to Pull' });
+  await userEvent.click(textbox);
+  await userEvent.paste('test1');
+
+  expect(resolveShortnameImageMock).toBeCalled();
+  await tick();
+  const FQNButton = screen.getByRole('checkbox', { name: 'Use Podman FQN' });
+
+  await userEvent.click(FQNButton);
+  const pullImagebutton = screen.getByRole('button', { name: 'Pull image' });
+  await userEvent.click(pullImagebutton);
+
+  const imageName = pullImageMock.mock.calls[0][1];
+  expect(imageName).toBe('someregistry/test1');
+});
+
+test('Expect if no docker.io shortname but checkbox not checked to use docker hub', async () => {
+  resolveShortnameImageMock.mockResolvedValue(['someregistry/test1']);
+  setup();
+  render(PullImage);
+
+  const textbox = screen.getByRole('textbox', { name: 'Image to Pull' });
+  await userEvent.click(textbox);
+  await userEvent.paste('test1');
+
+  expect(resolveShortnameImageMock).toBeCalled();
+  await tick();
+
+  const pullImagebutton = screen.getByRole('button', { name: 'Pull image' });
+  await userEvent.click(pullImagebutton);
+
+  const imageName = pullImageMock.mock.calls[0][1];
+  expect(imageName).toBe('docker.io/test1');
+});
+
+test('Expect if docker.io shortname exists to not use Podman FQN', async () => {
+  resolveShortnameImageMock.mockResolvedValue(['someregistry/test1', 'docker.io/test1']);
+  setup();
+  render(PullImage);
+
+  const textbox = screen.getByRole('textbox', { name: 'Image to Pull' });
+  await userEvent.click(textbox);
+  await userEvent.paste('test1');
+
+  expect(resolveShortnameImageMock).toBeCalled();
+  await tick();
+  expect(screen.queryByRole('checkbox', { name: 'Use Podman FQN' })).not.toBeInTheDocument();
+
+  const pullImagebutton = screen.getByRole('button', { name: 'Pull image' });
+  await userEvent.click(pullImagebutton);
+
+  const imageName = pullImageMock.mock.calls[0][1];
+  expect(imageName).toBe('test1');
+});
+
+test('Expect not to check not shortname images', async () => {
+  setup();
+  render(PullImage);
+
+  const textbox = screen.getByRole('textbox', { name: 'Image to Pull' });
+  await userEvent.click(textbox);
+  await userEvent.paste('test1/');
+
+  expect(resolveShortnameImageMock).not.toBeCalled();
 });

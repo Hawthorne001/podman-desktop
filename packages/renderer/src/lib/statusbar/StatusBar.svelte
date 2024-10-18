@@ -1,12 +1,17 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 
+import TaskIndicator from '/@/lib/statusbar/TaskIndicator.svelte';
+import { statusBarEntries } from '/@/stores/statusbar';
+import { ExperimentalTasksSettings } from '/@api/tasks-preferences';
+
 import type { StatusBarEntry } from '../../../../main/src/plugin/statusbar/statusbar-registry';
-import { statusBarEntries } from '../../stores/statusbar';
 import StatusBarItem from './StatusBarItem.svelte';
 
-let leftEntries: StatusBarEntry[] = [];
-let rightEntries: StatusBarEntry[] = [];
+let leftEntries: StatusBarEntry[] = $state([]);
+let rightEntries: StatusBarEntry[] = $state([]);
+
+let experimentalTaskStatusBar: boolean = $state(false);
 
 onMount(async () => {
   statusBarEntries.subscribe(value => {
@@ -44,26 +49,29 @@ onMount(async () => {
         return descriptor.entry;
       });
   });
+
+  experimentalTaskStatusBar =
+    (await window.getConfigurationValue<boolean>(
+      `${ExperimentalTasksSettings.SectionName}.${ExperimentalTasksSettings.StatusBar}`,
+    )) ?? false;
 });
 </script>
 
-<div class="flex items-center justify-between px-1 bg-[#302251] text-sm py-0.5 space-x-2 z-40">
-  <div>
-    <ul class="flex flex-wrap gap-x-2 list-none items-center">
-      {#each leftEntries as entry}
-        <li>
-          <StatusBarItem entry="{entry}" />
-        </li>
-      {/each}
-    </ul>
+<div
+  class="flex justify-between px-1 bg-[var(--pd-statusbar-bg)] text-[var(--pd-statusbar-text)] text-sm space-x-2 z-40"
+  role="contentinfo"
+  aria-label="Status Bar">
+  <div class="flex flex-wrap gap-x-1.5 h-full">
+    {#each leftEntries as entry}
+      <StatusBarItem entry={entry} />
+    {/each}
   </div>
-  <div class="place-self-end">
-    <ul class="flex flex-wrap flex-row-reverse gap-x-2 list-none items-center">
-      {#each rightEntries as entry}
-        <li>
-          <StatusBarItem entry="{entry}" />
-        </li>
-      {/each}
-    </ul>
+  <div class="flex flex-wrap flex-row-reverse gap-x-1.5 h-full place-self-end">
+    {#each rightEntries as entry}
+      <StatusBarItem entry={entry} />
+    {/each}
+    {#if experimentalTaskStatusBar}
+      <TaskIndicator />
+    {/if}
   </div>
 </div>

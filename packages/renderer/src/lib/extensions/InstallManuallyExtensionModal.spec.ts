@@ -85,8 +85,8 @@ function mockExtensionInstallFromImage(): {
 } {
   const resolve = vi.fn();
   const reject = vi.fn();
-  const logCallback = vi.fn<[string], void>();
-  const errorCallback = vi.fn<[string], void>();
+  const logCallback = vi.fn<(data: string) => void>();
+  const errorCallback = vi.fn<(data: string) => void>();
   vi.mocked(window.extensionInstallFromImage).mockImplementation((_image, mLogCallback, mErrorCallback) => {
     logCallback.mockImplementation((content: string) => mLogCallback(content));
     errorCallback.mockImplementation((content: string) => mErrorCallback(content));
@@ -120,7 +120,7 @@ test('install button should always be disable when extensionInstallFromImage is 
 
   const progressBar = screen.getByRole('progressbar', { name: 'Installation progress' });
   await vi.waitFor(() => {
-    expect(progressBar.getAttribute('style')).toBe('width: 100%;');
+    expect(progressBar.getAttribute('style')).toBe('width: 100%');
   });
 
   // expect button done to be disabled
@@ -176,7 +176,7 @@ test('progressbar should match latest log', async () => {
     logCallback(`Downloading sha256:random-sha256.tar - ${i}% - (${i}/64)`);
 
     await vi.waitFor(() => {
-      expect(progressBar.getAttribute('style')).toBe(`width: ${i}%;`);
+      expect(progressBar.getAttribute('style')).toBe(`width: ${i}%`);
     });
   }
 });
@@ -203,7 +203,7 @@ test('install button should be enable while extensionInstallFromImage is resolve
   logCallback('Downloading sha256:random-sha256.tar - 100% - (521578/521578)');
   const progressBar = screen.getByRole('progressbar', { name: 'Installation progress' });
   await vi.waitFor(() => {
-    expect(progressBar.getAttribute('style')).toBe('width: 100%;');
+    expect(progressBar.getAttribute('style')).toBe('width: 100%');
   });
 
   // resolve extensionInstallFromImage

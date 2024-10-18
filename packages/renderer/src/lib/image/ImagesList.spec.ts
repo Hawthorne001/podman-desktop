@@ -20,9 +20,12 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+/* eslint-disable import/no-duplicates */
+import { tick } from 'svelte';
 import { get } from 'svelte/store';
+/* eslint-enable import/no-duplicates */
 import { router } from 'tinro';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -56,6 +59,8 @@ beforeEach(() => {
   (window as any).getProviderInfos = getProviderInfosMock;
   (window as any).listViewsContributions = listViewsContributionsMock;
   listViewsContributionsMock.mockResolvedValue([]);
+  (window as any).getConfigurationValue = vi.fn();
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(false);
 
   (window.events as unknown) = {
     receive: (_channel: string, func: any) => {
@@ -65,11 +70,8 @@ beforeEach(() => {
 });
 
 async function waitRender(customProperties: object): Promise<void> {
-  const result = render(ImagesList, { ...customProperties });
-  // wait that result.component.$$.ctx[2] is set
-  while (result.component.$$.ctx[2] === undefined) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  render(ImagesList, { ...customProperties });
+  await tick();
 }
 
 test('Expect no container engines being displayed', async () => {
@@ -192,6 +194,95 @@ test('Expect filter empty screen', async () => {
 
   const filterButton = screen.getByRole('button', { name: 'Clear filter' });
   expect(filterButton).toBeInTheDocument();
+});
+
+test('Expect two images in list given image id and engine id', async () => {
+  getProviderInfosMock.mockResolvedValue([
+    {
+      name: 'podman',
+      status: 'started',
+      internalId: 'podman-internal-id',
+      containerConnections: [
+        {
+          name: 'podman-machine-default',
+          status: 'started',
+        },
+      ],
+    },
+  ]);
+
+  listImagesMock.mockResolvedValue([
+    {
+      Id: 'sha256:1234567890123',
+      RepoTags: ['fedora:old'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+    },
+    {
+      Id: 'sha256:1234567890123',
+      RepoTags: ['fedora:1'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'docker',
+      engineName: 'docker',
+    },
+    {
+      Id: 'sha256:1234567890123',
+      RepoTags: ['fedora:2'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+    },
+    {
+      Id: 'sha256:2345678901234',
+      RepoTags: ['fedora:3'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+    },
+    {
+      Id: 'sha256:3456789012345',
+      RepoTags: ['fedora:4'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+    },
+  ]);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('image-build'));
+
+  // wait store are populated
+  while (get(imagesInfos).length === 0) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  while (get(providerInfos).length === 0) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  await waitRender({ searchTerm: 'sha256:1234567890123', imageEngineId: 'podman' });
+
+  const image1 = screen.queryByRole('cell', { name: 'fedora 123456789012 old' });
+  expect(image1).toBeInTheDocument();
+  const image2 = screen.queryByRole('cell', { name: 'fedora 123456789012 2' });
+  expect(image2).toBeInTheDocument();
+  const image3 = screen.queryByRole('cell', { name: 'fedora 123456789012 1' });
+  expect(image3).not.toBeInTheDocument();
+  const image4 = screen.queryByRole('cell', { name: 'fedora 234567890123 3' });
+  expect(image4).not.toBeInTheDocument();
+  const image5 = screen.queryByRole('cell', { name: 'fedora 345678901234 4' });
+  expect(image5).not.toBeInTheDocument();
 });
 
 describe('Contributions', () => {
@@ -364,7 +455,7 @@ test('Expect importImage button redirects to image import page', async () => {
   expect(goToMock).toBeCalledWith('/images/import');
 });
 
-test('expect redirect to saveImage page when atleast one image is selected and the multiple save button is clicked', async () => {
+test('expect redirect to saveImage page when at least one image is selected and the multiple save button is clicked', async () => {
   getProviderInfosMock.mockResolvedValue([
     {
       name: 'podman',
@@ -426,10 +517,10 @@ test('expect redirect to saveImage page when atleast one image is selected and t
   await waitRender({});
 
   const toggleAll = screen.getByTitle('Toggle all');
-  await userEvent.click(toggleAll);
+  await fireEvent.click(toggleAll);
 
   const saveImages = screen.getByRole('button', { name: 'Save images' });
-  await userEvent.click(saveImages);
+  await fireEvent.click(saveImages);
 
   expect(goToMock).toBeCalledWith('/images/save');
 });
@@ -519,4 +610,65 @@ test('Manifest images display without actions', async () => {
   // Verify normal image is shown still.
   const normalImageRow = screen.getByRole('row', { name: 'normalimage' });
   expect(normalImageRow).toBeInTheDocument();
+});
+
+test('Expect user confirmation to pop up when preferences require', async () => {
+  getProviderInfosMock.mockResolvedValue([
+    {
+      name: 'podman',
+      status: 'started',
+      internalId: 'podman-internal-id',
+      containerConnections: [
+        {
+          name: 'podman-machine-default',
+          status: 'started',
+        },
+      ],
+    },
+  ]);
+
+  listImagesMock.mockResolvedValue([
+    {
+      Id: 'sha256:1234567890',
+      RepoTags: ['mockimage:latest'],
+      Created: 1644009612,
+      Size: 123,
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+    },
+  ]);
+
+  // dispatch events
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('image-build'));
+
+  // wait store are populated
+  while (get(imagesInfos).length === 0) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  while (get(providerInfos).length === 0) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  await waitRender({});
+
+  const checkboxes = screen.getAllByRole('checkbox', { name: 'Toggle image' });
+  await fireEvent.click(checkboxes[0]);
+
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(true);
+
+  (window as any).showMessageBox = vi.fn();
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 1 });
+
+  const deleteButton = screen.getByRole('button', { name: 'Delete 1 selected items' });
+  await fireEvent.click(deleteButton);
+
+  expect(window.showMessageBox).toHaveBeenCalledOnce();
+
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 0 });
+  await fireEvent.click(deleteButton);
+  expect(window.showMessageBox).toHaveBeenCalledTimes(2);
+  vi.waitFor(() => expect(window.deleteImage).toHaveBeenCalled());
 });

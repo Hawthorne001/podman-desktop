@@ -176,6 +176,11 @@ export class ConfigurationRegistry implements IConfigurationRegistry {
     return notifications;
   }
 
+  /**
+   * Register a configuration
+   * @param configurations
+   * @return the {@link Disposable} object provided **delete** definitely the value from the settings.
+   */
   public registerConfigurations(configurations: IConfigurationNode[]): Disposable {
     this.doRegisterConfigurations(configurations, true);
     return Disposable.create(() => {
@@ -229,10 +234,21 @@ export class ConfigurationRegistry implements IConfigurationRegistry {
     return scope === CONFIGURATION_DEFAULT_SCOPE;
   }
 
+  /**
+   * This method remove the configuration value from the settings definitely
+   * @remarks this would lose the value provided by the user
+   * @param configurations
+   */
   public deregisterConfigurations(configurations: IConfigurationNode[]): void {
     this.doDeregisterConfigurations(configurations, true);
   }
 
+  /**
+   * This method remove the configuration value from the settings definitely
+   * @remarks this would lose the value provided by the user
+   * @param configurations
+   * @param notify
+   */
   public doDeregisterConfigurations(configurations: IConfigurationNode[], notify?: boolean): string[] {
     const properties: string[] = [];
     for (const configuration of configurations) {
@@ -339,10 +355,12 @@ export class ConfigurationRegistry implements IConfigurationRegistry {
     section?: string,
     scope?: containerDesktopAPI.ConfigurationScope,
   ): containerDesktopAPI.Configuration {
-    const callback = (scope: containerDesktopAPI.ConfigurationScope): void => {
+    const callback = (sectionName: string, scope: containerDesktopAPI.ConfigurationScope): void => {
       if (scope === CONFIGURATION_DEFAULT_SCOPE) {
         this.saveDefault();
       }
+      // perform notification in case of the update
+      this._onDidUpdateConfiguration.fire({ properties: [sectionName] });
     };
     return new ConfigurationImpl(this.apiSender, callback, this.configurationValues, section, scope);
   }

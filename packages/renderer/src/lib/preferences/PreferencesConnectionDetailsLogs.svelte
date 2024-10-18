@@ -1,15 +1,15 @@
 <script lang="ts">
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 
 import { EmptyScreen } from '@podman-desktop/ui-svelte';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
 import { onDestroy, onMount } from 'svelte';
-import { Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
 
 import type { ProviderContainerConnectionInfo, ProviderKubernetesConnectionInfo } from '/@api/provider-info';
 
 import { TerminalSettings } from '../../../../main/src/plugin/terminal-settings';
-import { getPanelDetailColor } from '../color/color';
+import { getTerminalTheme } from '../../../../main/src/plugin/terminal-theme';
 import NoLogIcon from '../ui/NoLogIcon.svelte';
 import { writeToTerminal } from './Util';
 
@@ -58,9 +58,7 @@ onMount(async () => {
     fontSize,
     lineHeight,
     disableStdin: true,
-    theme: {
-      background: getPanelDetailColor(),
-    },
+    theme: getTerminalTheme(),
     convertEol: true,
   });
   // Refresh the terminal on initial load
@@ -98,18 +96,17 @@ onDestroy(() => {
 </script>
 
 <EmptyScreen
-  icon="{NoLogIcon}"
+  icon={NoLogIcon}
   title="No Log"
   message="Log output"
-  hidden="{noLogs === false}"
-  style="background-color: {getPanelDetailColor()}" />
+  hidden={noLogs === false}
+  class="bg-[var(--pd-details-bg)]" />
 
 <div
   aria-label="terminal"
-  class="min-w-full flex flex-col"
-  class:invisible="{noLogs === true}"
-  class:h-0="{noLogs === true}"
-  class:h-full="{noLogs === false}"
-  style="background-color: {getPanelDetailColor()}"
-  bind:this="{logsXtermDiv}">
+  class="min-w-full flex flex-col bg-[var(--pd-terminal-background)] p-[5px] pr-0"
+  class:invisible={noLogs === true}
+  class:h-0={noLogs === true}
+  class:h-full={noLogs === false}
+  bind:this={logsXtermDiv}>
 </div>

@@ -3,7 +3,7 @@ import { faCheck, faChevronDown, faCircle } from '@fortawesome/free-solid-svg-ic
 import { Button } from '@podman-desktop/ui-svelte';
 import Fa from 'svelte-fa';
 
-import { clearNotifications, isStatefulTask, tasksInfo } from '/@/stores/tasks';
+import { clearNotifications, tasksInfo } from '/@/stores/tasks';
 
 import TaskIcon from '../images/TaskIcon.svelte';
 import TaskManagerEmptyScreen from './TaskManagerEmptyScreen.svelte';
@@ -12,18 +12,8 @@ import TaskManagerGroup from './TaskManagerGroup.svelte';
 // display or not the tasks manager (defaut is false)
 export let showTaskManager = false;
 
-$: runningTasks = $tasksInfo.filter(task => {
-  if (isStatefulTask(task)) {
-    return task.state === 'running';
-  }
-  return false;
-});
-$: notificationsTasks = $tasksInfo.filter(task => {
-  if (isStatefulTask(task)) {
-    return task.state === 'completed';
-  }
-  return true;
-});
+$: runningTasks = $tasksInfo.filter(task => task.state === 'running');
+$: completedTasks = $tasksInfo.filter(task => task.state !== 'running');
 
 // hide the task manager
 function hide() {
@@ -48,23 +38,23 @@ window.events?.receive('toggle-task-manager', () => {
 </script>
 
 <!-- track keys like "ESC" -->
-<svelte:window on:keyup="{handleEscape}" />
+<svelte:window on:keyup={handleEscape} />
 
 {#if showTaskManager}
-  <div title="Tasks manager" class="fixed bottom-9 right-4 bg-charcoal-800 h-96 w-80 z-40">
+  <div title="Tasks manager" class="fixed bottom-9 right-4 bg-[var(--pd-modal-bg)] h-96 w-80 z-40">
     <!-- Draw the arrow below the box-->
     <div
       class="absolute bottom-0 z-50 right-[17px] transform -translate-x-1/2 translate-y-1/2 rotate-45 w-4 h-4 {$tasksInfo.length >
       0
-        ? 'bg-charcoal-800'
-        : 'bg-charcoal-600'} border-r border-b border-zinc-600">
+        ? 'bg-[var(--pd-modal-bg)]'
+        : 'bg-[var(--pd-invert-content-card-bg)]'} border-r border-b border-[var(--pd-modal-border)]">
     </div>
 
-    <div title="" class="flex flex-col h-full w-full border border-zinc-600">
+    <div title="" class="flex flex-col h-full w-full border border-[var(--pd-modal-border)]">
       <!-- header of the task manager -->
       <div class="flex flex-row w-full">
         <!-- title of bars-->
-        <div class="p-2 flex flex-row items-center w-full text-gray-400">
+        <div class="p-2 flex flex-row items-center w-full text-[var(--pd-invert-content-header-text)]">
           <TaskIcon size="15" />
           <div class="text-xs uppercase ml-2">tasks</div>
           <div class="flex-1"></div>
@@ -73,8 +63,11 @@ window.events?.receive('toggle-task-manager', () => {
             <BellSlashIcon size="15" />
           </div>
           -->
-          <button on:click="{() => hide()}" title="Hide (Escape)" class="cursor-pointer hover:bg-charcoal-600 p-1 ml-1">
-            <Fa icon="{faChevronDown}" size="0.9x" />
+          <button
+            on:click={() => hide()}
+            title="Hide (Escape)"
+            class="cursor-pointer hover:bg-[var(--pd-invert-content-card-bg)] p-1 ml-1">
+            <Fa icon={faChevronDown} size="0.9x" />
           </button>
         </div>
       </div>
@@ -83,23 +76,23 @@ window.events?.receive('toggle-task-manager', () => {
         <div class="flex flex-col grow h-[100px] overflow-y-auto">
           <!-- running tasks-->
           {#if runningTasks.length > 0}
-            <div class="flex bg-zinc-700 px-4">
+            <div class="flex bg-[var(--pd-content-bg)] px-4">
               <TaskManagerGroup
-                lineColor="bg-charcoal-600"
-                icon="{faCircle}"
-                tasks="{runningTasks}"
+                lineColor="bg-[var(--pd-invert-content-card-bg)]"
+                icon={faCircle}
+                tasks={runningTasks}
                 title="running tasks" />
             </div>
           {/if}
 
           <!-- completed tasks-->
-          {#if notificationsTasks.length > 0}
-            <div class="flex bg-charcoal-600 pt-1 px-4">
+          {#if completedTasks.length > 0}
+            <div class="flex bg-[var(--pd-invert-content-card-bg)] pt-1 px-4">
               <TaskManagerGroup
-                lineColor="bg-zinc-400"
-                icon="{faCheck}"
-                tasks="{notificationsTasks}"
-                title="notifications" />
+                lineColor="bg-[var(--pd-invert-content-bg)]"
+                icon={faCheck}
+                tasks={completedTasks}
+                title="completed" />
             </div>
           {/if}
         </div>
@@ -107,10 +100,10 @@ window.events?.receive('toggle-task-manager', () => {
 
       <!-- footer of the task manager -->
       <!-- only if there are tasks-->
-      {#if notificationsTasks.length > 0}
+      {#if completedTasks.length > 0}
         <div class="flex flex-row w-full">
           <div class="p-2 flex flex-row space-x-2 w-full">
-            <Button on:click="{() => clearNotifications()}">Clear</Button>
+            <Button on:click={() => clearNotifications()}>Clear</Button>
             <!--<Button>View task history</Button>-->
           </div>
         </div>

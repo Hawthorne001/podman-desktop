@@ -4,14 +4,18 @@ import { Button, ErrorMessage, Input } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
-import { exportContainerInfo } from '/@/stores/export-container-store';
-import { createTask } from '/@/stores/tasks';
+import { ContainerUtils } from '/@/lib/container/container-utils';
+import { handleNavigation } from '/@/navigation';
+import { containersInfos } from '/@/stores/containers';
+import { NavigationPage } from '/@api/navigation-page';
 
-import FormPage from '../ui/FormPage.svelte';
+import EngineFormPage from '../ui/EngineFormPage.svelte';
 import { Uri } from '../uri/Uri';
 import type { ContainerInfoUI } from './ContainerInfoUI';
 
-let container: ContainerInfoUI;
+export let containerID: string;
+
+let container: ContainerInfoUI | undefined = undefined;
 
 let invalidName = false;
 let invalidFolder = true;
@@ -21,16 +25,25 @@ let exportedError = '';
 let inProgress = false;
 $: invalidFields = invalidName || invalidFolder;
 
-onMount(async () => {
-  // grab current value
-  container = $exportContainerInfo;
-  if (!container) {
-    // go back to containers list
-    router.goto('/containers/');
-  }
+onMount(() => {
+  const containerUtils = new ContainerUtils();
+
+  // loading container info
+  return containersInfos.subscribe(containers => {
+    const matchingContainer = containers.find(c => c.Id === containerID);
+    if (matchingContainer) {
+      container = containerUtils.getContainerInfoUI(matchingContainer);
+    } else {
+      handleNavigation({
+        page: NavigationPage.CONTAINERS,
+      });
+    }
+  });
 });
 
 async function selectFolderPath() {
+  if (!container) return;
+
   const result = await window.saveDialog({
     title: 'Select the directory where to export the container content',
     defaultUri: {
@@ -52,74 +65,64 @@ async function selectFolderPath() {
 }
 
 async function exportContainer() {
+  if (!container) return;
+
   exportedError = '';
   inProgress = true;
-  const task = createTask(`Export container ${container.name}`);
-  task.action = {
-    name: 'Open folder >',
-    execute: () => {
-      window.openDialog({
-        defaultUri: outputUri,
-      });
-    },
-  };
+
   try {
     await window.exportContainer(container.engineId, {
       id: container.id,
       outputTarget: outputUri.fsPath,
     });
-    task.status = 'success';
     // go back to containers list
     router.goto('/containers/');
   } catch (error) {
-    task.status = 'failure';
-    task.error = String(error);
     exportedError = String(error);
   } finally {
-    task.state = 'completed';
     inProgress = false;
   }
 }
 </script>
 
 {#if container}
-  <FormPage title="Export container {container.name}">
+  <EngineFormPage title="Export container {container.name}">
     <svelte:fragment slot="icon">
       <i class="fas fa-download fa-2x" aria-hidden="true"></i>
     </svelte:fragment>
 
-    <div slot="content" class="flex flex-col min-w-full h-fit px-5 pb-5">
-      <div class="bg-charcoal-600 px-6 py-4 space-y-2 lg:px-8 sm:pb-6 xl:pb-8">
-        <div>
-          <label for="modalSelectTarget" class="block mb-2 text-sm font-medium text-gray-400">Export to:</label>
-          <div class="flex w-full">
-            <Input
-              class="grow mr-2"
-              name="{container.id}"
-              readonly
-              value="{outputTarget}"
-              id="input-export-container-name"
-              aria-invalid="{invalidFolder}" />
-            <Button
-              on:click="{() => selectFolderPath()}"
-              title="Open dialog to select the output file"
-              aria-label="Select output file">Browse ...</Button>
-          </div>
+    <div slot="content" class="space-y-2">
+      <div>
+        <label for="modalSelectTarget" class="block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+          >Export to:</label>
+        <div class="flex w-full">
+          <Input
+            class="grow mr-2"
+            name={container.id}
+            readonly
+            value={outputTarget}
+            id="input-export-container-name"
+            aria-invalid={invalidFolder} />
           <Button
-            on:click="{() => exportContainer()}"
-            class="w-full mt-5"
-            icon="{faDownload}"
-            inProgress="{inProgress}"
-            bind:disabled="{invalidFields}"
-            aria-label="Export container">
-            Export Container
-          </Button>
-          <div aria-label="createError">
-            {#if exportedError}
-              <ErrorMessage class="py-2 text-sm" error="{exportedError}" />
-            {/if}
-          </div>
+            on:click={() => selectFolderPath()}
+            title="Open dialog to select the output file"
+            aria-label="Select output file">Browse ...</Button>
+        </div>
+        <Button
+          on:click={() => exportContainer()}
+          class="w-full mt-5"
+          icon={faDownload}
+          inProgress={inProgress}
+          bind:disabled={invalidFields}
+          aria-label="Export container">
+          Export Container
+        </Button>
+        <div aria-label="createError">
+          {#if exportedError}
+            <ErrorMessage class="py-2 text-sm" error={exportedError} />
+          {/if}
         </div>
       </div>
-    </div></FormPage>
+    </div>
+  </EngineFormPage>
 {/if}

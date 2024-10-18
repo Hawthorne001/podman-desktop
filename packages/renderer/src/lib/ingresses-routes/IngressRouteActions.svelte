@@ -11,12 +11,14 @@ export let ingressRoute: IngressUI | RouteUI;
 export let detailed = false;
 
 const dispatch = createEventDispatcher<{ update: IngressUI | RouteUI }>();
-
+export let onUpdate: (update: IngressUI | RouteUI) => void = update => {
+  dispatch('update', update);
+};
 const ingressRouteUtils = new IngressRouteUtils();
 
 async function deleteIngressRoute(): Promise<void> {
   ingressRoute.status = 'DELETING';
-  dispatch('update', ingressRoute);
+  onUpdate(ingressRoute);
 
   if (ingressRouteUtils.isIngress(ingressRoute)) {
     await window.kubernetesDeleteIngress(ingressRoute.name);
@@ -27,7 +29,7 @@ async function deleteIngressRoute(): Promise<void> {
 </script>
 
 <ListItemButtonIcon
-  title="{`Delete ${ingressRouteUtils.isIngress(ingressRoute) ? 'Ingress' : 'Route'}`}"
-  onClick="{() => deleteIngressRoute()}"
-  detailed="{detailed}"
-  icon="{faTrash}" />
+  title={`Delete ${ingressRouteUtils.isIngress(ingressRoute) ? 'Ingress' : 'Route'}`}
+  onClick={() => deleteIngressRoute()}
+  detailed={detailed}
+  icon={faTrash} />

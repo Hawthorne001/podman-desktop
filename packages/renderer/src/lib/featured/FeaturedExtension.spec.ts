@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -117,7 +117,7 @@ describe('title', () => {
     expect(title).toBeNull();
   });
 
-  test('title should not be visible by default', async () => {
+  test('title should be visible when displayTitle is true', async () => {
     render(FeaturedExtension, {
       featuredExtension: fetchableFeaturedExtension,
       displayTitle: true,

@@ -1,8 +1,9 @@
 <script lang="ts">
-import { Button, CloseButton, ErrorMessage, Input, Modal } from '@podman-desktop/ui-svelte';
+import { Button, ErrorMessage, Input } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
+import Dialog from '../dialogs/Dialog.svelte';
 import type { ImageInfoUI } from './ImageInfoUI';
 
 export let closeCallback: () => void;
@@ -12,8 +13,10 @@ export let imageInfoToRename: ImageInfoUI;
 let imageName = '';
 let imageTag = '';
 onMount(async () => {
-  imageName = imageInfoToRename.name;
-  imageTag = imageInfoToRename.tag;
+  if (imageInfoToRename.name !== '<none>') {
+    imageName = imageInfoToRename.name;
+    imageTag = imageInfoToRename.tag;
+  }
 });
 
 function disableSave(name: string, tag: string): boolean {
@@ -44,11 +47,21 @@ function validateImageTag(event: any): void {
 }
 
 async function renameImage(imageName: string, imageTag: string) {
-  const currentImageNameTag = `${imageInfoToRename.name}:${imageInfoToRename.tag}`;
+  let currentImageNameTag: string;
+  let shouldDelete: boolean;
+  if (imageInfoToRename.name === '<none>') {
+    currentImageNameTag = imageInfoToRename.id;
+    shouldDelete = false;
+  } else {
+    shouldDelete = true;
+    currentImageNameTag = `${imageInfoToRename.name}:${imageInfoToRename.tag}`;
+  }
 
   try {
     await window.tagImage(imageInfoToRename.engineId, currentImageNameTag, imageName, imageTag);
-    await window.deleteImage(imageInfoToRename.engineId, currentImageNameTag);
+    if (shouldDelete) {
+      await window.deleteImage(imageInfoToRename.engineId, currentImageNameTag);
+    }
     closeCallback();
   } catch (error: any) {
     imageNameErrorMessage = error.message;
@@ -60,62 +73,52 @@ async function renameImage(imageName: string, imageTag: string) {
 }
 </script>
 
-<Modal
-  name="Edit Image"
-  on:close="{() => {
+<Dialog
+  title="Edit Image"
+  on:close={() => {
     closeCallback();
-  }}">
-  <div class="modal flex flex-col place-self-center">
-    <div
-      class="flex items-center justify-between px-6 py-5 space-x-2 text-[var(--pd-modal-header-text)] bg-[var(--pd-modal-header-bg)]">
-      <h1 class="grow text-lg font-bold capitalize">Edit Image</h1>
+  }}>
+  <div slot="content" class="w-full">
+    <label for="imageName" class="block my-2 text-sm font-bold text-[var(--pd-modal-text)]">Image Name</label>
+    <Input
+      bind:value={imageName}
+      name="imageName"
+      id="imageName"
+      placeholder="Enter image name (e.g. quay.io/namespace/my-image-name)"
+      on:input={event => validateImageName(event)}
+      aria-invalid={imageNameErrorMessage !== ''}
+      aria-label="imageName"
+      required />
+    {#if imageNameErrorMessage}
+      <ErrorMessage error={imageNameErrorMessage} />
+    {/if}
 
-      <CloseButton on:click="{() => closeCallback()}" />
-    </div>
-    <div class="flex flex-col px-10 py-4 text-sm leading-5 space-y-5">
-      <div>
-        <label for="imageName" class="block my-2 text-sm font-bold text-[var(--pd-modal-text)]">Image Name</label>
-        <Input
-          bind:value="{imageName}"
-          name="imageName"
-          id="imageName"
-          placeholder="Enter image name (e.g. quay.io/namespace/my-image-name)"
-          on:input="{event => validateImageName(event)}"
-          aria-invalid="{imageNameErrorMessage !== ''}"
-          aria-label="imageName"
-          required />
-        {#if imageNameErrorMessage}
-          <ErrorMessage error="{imageNameErrorMessage}" />
-        {/if}
-
-        <label for="imageTag" class="block my-2 text-sm font-bold text-[var(--pd-modal-text)]">Image Tag</label>
-        <Input
-          bind:value="{imageTag}"
-          name="imageTag"
-          id="imageTag"
-          placeholder="Enter image tag (e.g. latest)"
-          on:input="{event => validateImageTag(event)}"
-          aria-invalid="{imageTagErrorMessage !== ''}"
-          aria-label="imageTag"
-          required />
-        {#if imageTagErrorMessage}
-          <ErrorMessage error="{imageTagErrorMessage}" />
-        {/if}
-        <div class="w-full mt-6 grid grid-cols-4 gap-6">
-          <Button
-            class="pcol-start-3"
-            type="link"
-            on:click="{() => {
-              closeCallback();
-            }}">Cancel</Button>
-          <Button
-            class="col-start-4"
-            disabled="{disableSave(imageName, imageTag)}"
-            on:click="{() => {
-              renameImage(imageName, imageTag);
-            }}">Save</Button>
-        </div>
-      </div>
-    </div>
+    <label for="imageTag" class="block my-2 text-sm font-bold text-[var(--pd-modal-text)]">Image Tag</label>
+    <Input
+      bind:value={imageTag}
+      name="imageTag"
+      id="imageTag"
+      placeholder="Enter image tag (e.g. latest)"
+      on:input={event => validateImageTag(event)}
+      aria-invalid={imageTagErrorMessage !== ''}
+      aria-label="imageTag"
+      required />
+    {#if imageTagErrorMessage}
+      <ErrorMessage error={imageTagErrorMessage} />
+    {/if}
   </div>
-</Modal>
+  <svelte:fragment slot="buttons">
+    <Button
+      class="pcol-start-3"
+      type="link"
+      on:click={() => {
+        closeCallback();
+      }}>Cancel</Button>
+    <Button
+      class="col-start-4"
+      disabled={disableSave(imageName, imageTag)}
+      on:click={() => {
+        renameImage(imageName, imageTag);
+      }}>Save</Button>
+  </svelte:fragment>
+</Dialog>

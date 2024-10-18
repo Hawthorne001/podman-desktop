@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2022 Red Hat, Inc.
+ * Copyright (C) 2022-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,14 +32,14 @@ export class ConfigurationImpl implements containerDesktopAPI.Configuration {
 
   constructor(
     private apiSender: ApiSenderType,
-    private updateCallback: (scope: containerDesktopAPI.ConfigurationScope) => void,
+    protected updateCallback: (sectionName: string, scope: containerDesktopAPI.ConfigurationScope) => void,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private configurationValues: Map<string, any>,
     private globalSection?: string,
     paramScope?: containerDesktopAPI.ConfigurationScope,
   ) {
     if (!globalSection) {
-      globalSection = '';
+      this.globalSection = '';
     }
     if (!paramScope) {
       this.scope = CONFIGURATION_DEFAULT_SCOPE;
@@ -49,7 +49,7 @@ export class ConfigurationImpl implements containerDesktopAPI.Configuration {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  get<T>(section: any, defaultValue?: any): T | T | undefined {
+  get<T>(section: any, defaultValue?: any): T | undefined {
     const localKey = this.getLocalKey(section);
 
     // now look if we have this value
@@ -88,7 +88,7 @@ export class ConfigurationImpl implements containerDesktopAPI.Configuration {
       this.apiSender.send('configuration-changed');
     }
     // call only for default scope to save
-    this.updateCallback(this.scope);
+    this.updateCallback(section, this.scope);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

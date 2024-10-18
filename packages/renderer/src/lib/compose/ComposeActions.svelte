@@ -5,6 +5,7 @@ import { createEventDispatcher, onMount } from 'svelte';
 import { router } from 'tinro';
 
 import ContributionActions from '/@/lib/actions/ContributionActions.svelte';
+import { withConfirmation } from '/@/lib/dialogs/messagebox-utils';
 
 import type { Menu } from '../../../../main/src/plugin/menu-registry';
 import { MenuContext } from '../../../../main/src/plugin/menu-registry';
@@ -17,7 +18,9 @@ export let dropdownMenu = false;
 export let detailed = false;
 
 const dispatch = createEventDispatcher<{ update: ComposeInfoUI }>();
-
+export let onUpdate: (update: ComposeInfoUI) => void = update => {
+  dispatch('update', update);
+};
 const composeLabel = 'com.docker.compose.project';
 
 let contributions: Menu[] = [];
@@ -45,14 +48,14 @@ function inProgress(inProgress: boolean, state?: string): void {
       container.state = state;
     }
   }
-  dispatch('update', compose);
+  onUpdate(compose);
 }
 
 function handleError(errorMessage: string): void {
   compose.actionError = errorMessage;
   compose.status = 'ERROR';
 
-  dispatch('update', compose);
+  onUpdate(compose);
 }
 
 async function startCompose() {
@@ -118,57 +121,56 @@ if (dropdownMenu) {
 
 <ListItemButtonIcon
   title="Start Compose"
-  onClick="{() => startCompose()}"
-  hidden="{compose.status === 'RUNNING' || compose.status === 'STOPPING'}"
-  detailed="{detailed}"
-  inProgress="{compose.actionInProgress && compose.status === 'STARTING'}"
-  icon="{faPlay}"
+  onClick={() => startCompose()}
+  hidden={compose.status === 'RUNNING' || compose.status === 'STOPPING'}
+  detailed={detailed}
+  inProgress={compose.actionInProgress && compose.status === 'STARTING'}
+  icon={faPlay}
   iconOffset="pl-[0.15rem]" />
 
 <ListItemButtonIcon
   title="Stop Compose"
-  onClick="{() => stopCompose()}"
-  hidden="{!(compose.status === 'RUNNING' || compose.status === 'STOPPING')}"
-  detailed="{detailed}"
-  inProgress="{compose.actionInProgress && compose.status === 'STOPPING'}"
-  icon="{faStop}" />
+  onClick={() => stopCompose()}
+  hidden={!(compose.status === 'RUNNING' || compose.status === 'STOPPING')}
+  detailed={detailed}
+  inProgress={compose.actionInProgress && compose.status === 'STOPPING'}
+  icon={faStop} />
 
 <ListItemButtonIcon
   title="Delete Compose"
-  confirm="{true}"
-  onClick="{() => deleteCompose()}"
-  icon="{faTrash}"
-  detailed="{detailed}"
-  inProgress="{compose.actionInProgress && compose.status === 'DELETING'}" />
+  onClick={() => withConfirmation(deleteCompose, `delete compose ${compose.name}`)}
+  icon={faTrash}
+  detailed={detailed}
+  inProgress={compose.actionInProgress && compose.status === 'DELETING'} />
 
 <!-- If dropdownMenu is true, use it, otherwise just show the regular buttons -->
-<svelte:component this="{actionsStyle}">
+<svelte:component this={actionsStyle}>
   {#if !detailed}
     <ListItemButtonIcon
       title="Generate Kube"
-      onClick="{() => openGenerateKube()}"
-      menu="{dropdownMenu}"
-      detailed="{detailed}"
-      icon="{faFileCode}" />
+      onClick={() => openGenerateKube()}
+      menu={dropdownMenu}
+      detailed={detailed}
+      icon={faFileCode} />
   {/if}
   <ListItemButtonIcon
     title="Deploy to Kubernetes"
-    onClick="{() => deployToKubernetes()}"
-    menu="{dropdownMenu}"
-    hidden="{compose.engineType !== 'podman'}"
-    detailed="{detailed}"
-    icon="{faRocket}" />
+    onClick={() => deployToKubernetes()}
+    menu={dropdownMenu}
+    hidden={compose.engineType !== 'podman'}
+    detailed={detailed}
+    icon={faRocket} />
   <ListItemButtonIcon
     title="Restart Compose"
-    onClick="{() => restartCompose()}"
-    menu="{dropdownMenu}"
-    detailed="{detailed}"
-    icon="{faArrowsRotate}" />
+    onClick={() => restartCompose()}
+    menu={dropdownMenu}
+    detailed={detailed}
+    icon={faArrowsRotate} />
   <ContributionActions
-    args="{[compose]}"
+    args={[compose]}
     contextPrefix="composeItem"
-    dropdownMenu="{dropdownMenu}"
-    contributions="{contributions}"
-    detailed="{detailed}"
-    onError="{handleError}" />
+    dropdownMenu={dropdownMenu}
+    contributions={contributions}
+    detailed={detailed}
+    onError={handleError} />
 </svelte:component>

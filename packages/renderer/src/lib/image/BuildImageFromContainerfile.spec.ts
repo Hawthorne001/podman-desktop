@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,10 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { beforeEach } from 'node:test';
-
 import type { ProviderStatus } from '@podman-desktop/api';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeAll, expect, test, vi } from 'vitest';
+import { beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 import BuildImageFromContainerfile from '/@/lib/image/BuildImageFromContainerfile.svelte';
 import { buildImagesInfo } from '/@/stores/build-images';
@@ -34,9 +32,11 @@ import { recommendedRegistries } from '/@/stores/recommendedRegistries';
 import type { ProviderContainerConnectionInfo, ProviderInfo } from '/@api/provider-info';
 
 // xterm is used in the UI, but not tested, added in order to avoid the multiple warnings being shown during the test.
-vi.mock('xterm', () => {
+vi.mock('@xterm/xterm', () => {
   return {
-    Terminal: vi.fn().mockReturnValue({ loadAddon: vi.fn(), open: vi.fn(), write: vi.fn(), clear: vi.fn() }),
+    Terminal: vi
+      .fn()
+      .mockReturnValue({ loadAddon: vi.fn(), open: vi.fn(), write: vi.fn(), clear: vi.fn(), dispose: vi.fn() }),
   };
 });
 
@@ -81,6 +81,7 @@ function setup() {
   const pStatus: ProviderStatus = 'started';
   const pInfo: ProviderContainerConnectionInfo = {
     name: 'test',
+    displayName: 'test',
     status: 'started',
     endpoint: {
       socketPath: '',
@@ -169,10 +170,6 @@ test('Select multiple platforms and expect pressing Build will do two buildImage
   expect(containerFilePath).toBeInTheDocument();
   await userEvent.type(containerFilePath, '/somepath/containerfile');
 
-  const buildFolder = screen.getByRole('textbox', { name: 'Build context directory' });
-  expect(buildFolder).toBeInTheDocument();
-  await userEvent.type(buildFolder, '/somepath');
-
   // Type in the image name a test value 'foobar'
   const containerImageName = screen.getByRole('textbox', { name: 'Image name' });
   expect(containerImageName).toBeInTheDocument();
@@ -251,10 +248,6 @@ test('Selecting one platform only calls buildImage once with the selected platfo
   const containerFilePath = screen.getByRole('textbox', { name: 'Containerfile path' });
   expect(containerFilePath).toBeInTheDocument();
   await userEvent.type(containerFilePath, '/somepath/containerfile');
-
-  const buildFolder = screen.getByRole('textbox', { name: 'Build context directory' });
-  expect(buildFolder).toBeInTheDocument();
-  await userEvent.type(buildFolder, '/somepath');
 
   const imageName = screen.getByRole('textbox', { name: 'Image name' });
   expect(imageName).toBeInTheDocument();

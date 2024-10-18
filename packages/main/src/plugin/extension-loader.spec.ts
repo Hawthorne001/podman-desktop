@@ -19,19 +19,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import * as fs from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type * as containerDesktopAPI from '@podman-desktop/api';
 import { app } from 'electron';
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import type { Certificates } from '/@/plugin/certificates.js';
 import type { ContributionManager } from '/@/plugin/contribution-manager.js';
-import type { KubeGeneratorRegistry } from '/@/plugin/kube-generator-registry.js';
+import type { KubeGeneratorRegistry } from '/@/plugin/kubernetes/kube-generator-registry.js';
 import { NavigationManager } from '/@/plugin/navigation/navigation-manager.js';
-import { NavigationPage } from '/@/plugin/navigation/navigation-page.js';
 import type { WebviewRegistry } from '/@/plugin/webview/webview-registry.js';
 import type { ContributionInfo } from '/@api/contribution-info.js';
+import { NavigationPage } from '/@api/navigation-page.js';
 import type { WebviewInfo } from '/@api/webview-info.js';
 
 import { getBase64Image } from '../util.js';
@@ -51,27 +52,29 @@ import { ExtensionLoader } from './extension-loader.js';
 import type { FilesystemMonitoring } from './filesystem-monitoring.js';
 import type { IconRegistry } from './icon-registry.js';
 import type { ImageCheckerImpl } from './image-checker.js';
+import type { ImageFilesRegistry } from './image-files-registry.js';
 import type { ImageRegistry } from './image-registry.js';
 import type { InputQuickPickRegistry } from './input-quickpick/input-quickpick-registry.js';
-import type { KubernetesClient } from './kubernetes-client.js';
+import type { KubernetesClient } from './kubernetes/kubernetes-client.js';
 import type { MenuRegistry } from './menu-registry.js';
 import type { MessageBox } from './message-box.js';
-import type { NotificationRegistry } from './notification-registry.js';
 import type { OnboardingRegistry } from './onboarding-registry.js';
-import type { ProgressImpl } from './progress-impl.js';
 import type { ProviderRegistry } from './provider-registry.js';
 import type { Proxy } from './proxy.js';
 import type { ExtensionSecretStorage, SafeStorageRegistry } from './safe-storage/safe-storage-registry.js';
 import type { StatusBarRegistry } from './statusbar/statusbar-registry.js';
+import type { NotificationRegistry } from './tasks/notification-registry.js';
+import { type ProgressImpl, ProgressLocation } from './tasks/progress-impl.js';
 import type { Telemetry } from './telemetry/telemetry.js';
 import type { TrayMenuRegistry } from './tray-menu-registry.js';
+import type { IDisposable } from './types/disposable.js';
 import { Disposable } from './types/disposable.js';
 import { Uri } from './types/uri.js';
 import { Exec } from './util/exec.js';
 import type { ViewRegistry } from './view-registry.js';
 
 class TestExtensionLoader extends ExtensionLoader {
-  public async setupScanningDirectory(): Promise<void> {
+  public override async setupScanningDirectory(): Promise<void> {
     return super.setupScanningDirectory();
   }
 
@@ -86,12 +89,15 @@ class TestExtensionLoader extends ExtensionLoader {
   getExtensionState(): Map<string, string> {
     return this.extensionState;
   }
+  getActivatedExtensions(): Map<string, ActivatedExtension> {
+    return this.activatedExtensions;
+  }
 
   getExtensionStateErrors(): Map<string, unknown> {
     return this.extensionStateErrors;
   }
 
-  doRequire(module: string): NodeRequire {
+  override doRequire(module: string): NodeRequire {
     return super.doRequire(module);
   }
 
@@ -122,10 +128,13 @@ const configurationRegistryGetConfigurationMock = vi.fn();
 const configurationRegistryUpdateConfigurationMock = vi.fn();
 const configurationRegistry: ConfigurationRegistry = {
   getConfiguration: configurationRegistryGetConfigurationMock,
+  registerConfigurations: vi.fn(),
   updateConfigurationValue: configurationRegistryUpdateConfigurationMock,
 } as unknown as ConfigurationRegistry;
 
-const imageRegistry: ImageRegistry = {} as unknown as ImageRegistry;
+const imageRegistry: ImageRegistry = {
+  registerRegistry: vi.fn(),
+} as unknown as ImageRegistry;
 
 const apiSender: ApiSenderType = { send: vi.fn() } as unknown as ApiSenderType;
 
@@ -133,7 +142,9 @@ const trayMenuRegistry: TrayMenuRegistry = {} as unknown as TrayMenuRegistry;
 
 const messageBox: MessageBox = {} as MessageBox;
 
-const progress: ProgressImpl = {} as ProgressImpl;
+const progress: ProgressImpl = {
+  withProgress: vi.fn(),
+} as unknown as ProgressImpl;
 
 const statusBarRegistry: StatusBarRegistry = {} as unknown as StatusBarRegistry;
 
@@ -202,6 +213,10 @@ const imageCheckerImpl: ImageCheckerImpl = {
   registerImageCheckerProvider: vi.fn(),
 } as unknown as ImageCheckerImpl;
 
+const imageFilesImpl: ImageFilesRegistry = {
+  registerImageFilesProvider: vi.fn(),
+} as unknown as ImageFilesRegistry;
+
 const contributionManager: ContributionManager = {
   listContributions: vi.fn(),
 } as unknown as ContributionManager;
@@ -217,6 +232,7 @@ const navigationManager: NavigationManager = new NavigationManager(
   contributionManager,
   providerRegistry,
   webviewRegistry,
+  commandRegistry,
 );
 
 const colorRegistry = {
@@ -229,6 +245,8 @@ const dialogRegistry: DialogRegistry = {
   openDialog: openDialogMock,
   saveDialog: saveDialogMock,
 } as unknown as DialogRegistry;
+
+const certificates: Certificates = {} as unknown as Certificates;
 
 vi.mock('electron', () => {
   return {
@@ -275,11 +293,13 @@ beforeAll(() => {
     cliToolRegistry,
     notificationRegistry,
     imageCheckerImpl,
+    imageFilesImpl,
     navigationManager,
     webviewRegistry,
     colorRegistry,
     dialogRegistry,
     safeStorageRegistry,
+    certificates,
   );
 });
 
@@ -511,9 +531,46 @@ test('Verify extension load', async () => {
   });
 
   expect(telemetry.track).toBeCalledWith(
-    'loadExtension',
+    'loadExtension.error',
     expect.objectContaining({ extensionId: id, extensionVersion: '1.1' }),
   );
+});
+
+test('Verify extension do not add configuration to subscriptions', async () => {
+  const id = 'extension.foo';
+
+  const disposable = {
+    dispose: vi.fn(),
+  } as unknown as Disposable;
+  vi.mocked(configurationRegistry.registerConfigurations).mockReturnValue(disposable);
+
+  const subscriptions: Disposable[] = [];
+
+  await extensionLoader.loadExtension({
+    id: id,
+    name: 'id',
+    path: 'dummy',
+    api: {} as typeof containerDesktopAPI,
+    mainPath: '',
+    removable: false,
+    manifest: {
+      version: '1.1',
+      contributes: {
+        configuration: {
+          title: 'dummy-configuration-title',
+        },
+      },
+    },
+    subscriptions: subscriptions,
+    readme: '',
+    dispose: vi.fn(),
+  });
+
+  expect(configurationRegistry.registerConfigurations).toHaveBeenCalled();
+  expect(subscriptions).not.toContain(disposable);
+
+  await extensionLoader.deactivateExtension(id);
+  expect(disposable.dispose).not.toHaveBeenCalled();
 });
 
 test('Verify disable extension updates configuration', async () => {
@@ -581,10 +638,10 @@ test('Verify setExtensionsUpdates', async () => {
 
   // check we have our extension
   expect(extensions.length).toBe(1);
-  expect(extensions[0].id).toBe(extensionId);
+  expect(extensions[0]?.id).toBe(extensionId);
 
   // check that update field is empty
-  expect(extensions[0].update).toBeUndefined();
+  expect(extensions[0]?.update).toBeUndefined();
 
   // now call the update
 
@@ -602,10 +659,10 @@ test('Verify setExtensionsUpdates', async () => {
   const extensionsAfterUpdate = await extensionLoader.listExtensions();
   // check we have our extension
   expect(extensionsAfterUpdate.length).toBe(1);
-  expect(extensionsAfterUpdate[0].id).toBe(extensionId);
+  expect(extensionsAfterUpdate[0]?.id).toBe(extensionId);
 
   // check that update field is set
-  expect(extensionsAfterUpdate[0].update).toStrictEqual({
+  expect(extensionsAfterUpdate[0]?.update).toStrictEqual({
     ociUri: 'quay.io/extension',
     version: newVersion,
   });
@@ -704,7 +761,7 @@ test('Verify searchForMissingDependencies(analyzedExtensions);', async () => {
   expect(analyzedExtension3.missingDependencies).toStrictEqual([unknownExtensionId]);
 });
 
-test('Verify searchForMissingDependencies(analyzedExtensions);', async () => {
+test('Verify sortExtensionsByDependencies(analyzedExtensions);', async () => {
   const extensionId1 = 'foo.extension1';
   const extensionId2 = 'foo.extension2';
   const extensionId3 = 'foo.extension3';
@@ -891,6 +948,7 @@ describe('analyze extension and main', async () => {
 
     const readmeContent = 'This is my custom README';
 
+    vi.mocked(realpath).mockResolvedValue('/fake/path');
     // mock readFile
     vi.mocked(readFile).mockResolvedValue(readmeContent);
 
@@ -913,6 +971,39 @@ describe('analyze extension and main', async () => {
     expect(extension?.id).toBe('fooPublisher.fooName');
   });
 
+  test('check for extension with linked folder', async () => {
+    vi.mock('node:fs');
+    vi.mock('node:fs/promises');
+
+    // mock fs.existsSync
+    const fsExistsSyncMock = vi.spyOn(fs, 'existsSync');
+    fsExistsSyncMock.mockReturnValue(true);
+
+    const readmeContent = 'This is my custom README';
+
+    vi.mocked(realpath).mockResolvedValue('/fake/path');
+    // mock readFile
+    vi.mocked(readFile).mockResolvedValue(readmeContent);
+
+    const fakeManifest = {
+      publisher: 'fooPublisher',
+      name: 'fooName',
+      main: 'main-entry.js',
+    };
+
+    // mock loadManifest
+    const loadManifestMock = vi.spyOn(extensionLoader, 'loadManifest');
+    loadManifestMock.mockResolvedValue(fakeManifest);
+
+    const extension = await extensionLoader.analyzeExtension(path.resolve('/', 'linked', 'path'), false);
+
+    expect(extension).toBeDefined();
+    expect(extension?.error).toBeDefined();
+    expect(extension?.mainPath).toBe(path.resolve('/', 'fake', 'path', 'main-entry.js'));
+    expect(extension.readme).toBe(readmeContent);
+    expect(extension?.id).toBe('fooPublisher.fooName');
+  });
+
   test('check for extension without main entry', async () => {
     vi.mock('node:fs');
 
@@ -920,6 +1011,7 @@ describe('analyze extension and main', async () => {
     const fsExistsSyncMock = vi.spyOn(fs, 'existsSync');
     fsExistsSyncMock.mockReturnValue(true);
 
+    vi.mocked(realpath).mockResolvedValue('/fake/path');
     vi.mocked(readFile).mockResolvedValue('empty');
 
     const fakeManifest = {
@@ -944,24 +1036,34 @@ describe('analyze extension and main', async () => {
 
 describe('setContextValue', async () => {
   test('without scope the setValue is called with original value', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
     const setValueSpy = vi.spyOn(context, 'setValue');
 
     api.context.setValue('key', 'value');
     expect(setValueSpy).toBeCalledWith('key', 'value');
   });
   test('with onboarding scope the key is prefixed before calling setValue', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
     const setValueSpy = vi.spyOn(context, 'setValue');
 
     api.context.setValue('key', 'value', 'onboarding');
@@ -1036,19 +1138,76 @@ test('Verify extension uri', async () => {
   expect(activateMethod).toBeCalled();
 
   // check extensionUri
-  const grabUri: containerDesktopAPI.Uri = activateMethod.mock.calls[0][0].extensionUri;
+  const grabUri: containerDesktopAPI.Uri = activateMethod.mock.calls[0]?.[0].extensionUri;
   expect(grabUri).toBeDefined();
   expect(grabUri.fsPath).toBe('dummy');
 });
 
+test('Verify exports and packageJSON', async () => {
+  const id = 'extension.id';
+  const activateMethod = vi.fn();
+  activateMethod.mockResolvedValue({
+    hello: () => 'world',
+  });
+
+  configurationRegistryGetConfigurationMock.mockReturnValue({ get: vi.fn().mockReturnValue(1) });
+
+  await extensionLoader.activateExtension(
+    {
+      id: id,
+      name: 'id',
+      path: 'dummy',
+      api: {} as typeof containerDesktopAPI,
+      mainPath: '',
+      removable: false,
+      manifest: {
+        foo: 'bar',
+      },
+      subscriptions: [],
+      readme: '',
+      dispose: vi.fn(),
+    },
+    { activate: activateMethod },
+  );
+
+  expect(activateMethod).toBeCalled();
+
+  const myActivatedExtension = extensionLoader.getActivatedExtensions().get(id);
+  expect(myActivatedExtension).toBeDefined();
+
+  expect(myActivatedExtension?.exports).toBeDefined();
+  expect(myActivatedExtension?.exports.hello()).toBe('world');
+
+  expect(myActivatedExtension?.packageJSON).toBeDefined();
+  expect((myActivatedExtension?.packageJSON as any)?.foo).toBe('bar');
+
+  const exposed = extensionLoader.getExposedExtension(id);
+  expect(exposed).toBeDefined();
+  expect(exposed?.exports.hello()).toBe('world');
+  expect((exposed as any).packageJSON.foo).toBe('bar');
+
+  const allExtensions = extensionLoader.getAllExposedExtensions();
+  expect(allExtensions).toBeDefined();
+  // 1 item
+  expect(allExtensions.length).toBe(1);
+  expect(allExtensions[0]?.exports.hello()).toBe('world');
+  expect((allExtensions[0] as any).packageJSON.foo).toBe('bar');
+});
+
 describe('Navigation', async () => {
   test('navigateToContainers', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Spy send method
     const sendMock = vi.spyOn(apiSender, 'send');
@@ -1102,12 +1261,18 @@ describe('Navigation', async () => {
       },
     },
   ])('$name', async ({ method, expected }) => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const containerExistSpy = vi.spyOn(containerProviderRegistry, 'containerExist');
@@ -1147,12 +1312,18 @@ describe('Navigation', async () => {
         api.navigateToContainerTerminal,
     },
   ])('$name', async ({ method }) => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const containerExistSpy = vi.spyOn(containerProviderRegistry, 'containerExist');
@@ -1172,12 +1343,18 @@ describe('Navigation', async () => {
   });
 
   test('navigateToImages', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Spy send method
     const sendMock = vi.spyOn(apiSender, 'send');
@@ -1186,12 +1363,18 @@ describe('Navigation', async () => {
     expect(sendMock).toBeCalledWith('navigate', { page: NavigationPage.IMAGES });
   });
   test('navigateToImage existing image', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const imageExistSpy = vi.spyOn(containerProviderRegistry, 'imageExist');
@@ -1216,12 +1399,18 @@ describe('Navigation', async () => {
     expect(imageExistSpy).toHaveBeenCalledOnce();
   });
   test('navigateToImage non-existent image', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const imageExistSpy = vi.spyOn(containerProviderRegistry, 'imageExist');
@@ -1246,12 +1435,18 @@ describe('Navigation', async () => {
     expect(imageExistSpy).toHaveBeenCalledOnce();
   });
   test('navigateToVolumes', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Spy send method
     const sendMock = vi.spyOn(apiSender, 'send');
@@ -1260,12 +1455,17 @@ describe('Navigation', async () => {
     expect(sendMock).toBeCalledWith('navigate', { page: NavigationPage.VOLUMES });
   });
   test('navigateToVolume existing volume', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const volumeExistSpy = vi.spyOn(containerProviderRegistry, 'volumeExist');
@@ -1281,7 +1481,6 @@ describe('Navigation', async () => {
       page: NavigationPage.VOLUME,
       parameters: {
         name: 'valid-name',
-        engineId: 'valid-engine',
       },
     });
 
@@ -1289,12 +1488,18 @@ describe('Navigation', async () => {
     expect(volumeExistSpy).toHaveBeenCalledOnce();
   });
   test('navigateToVolume non-existent volume', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const volumeExistSpy = vi.spyOn(containerProviderRegistry, 'volumeExist');
@@ -1319,12 +1524,18 @@ describe('Navigation', async () => {
     expect(volumeExistSpy).toHaveBeenCalledOnce();
   });
   test('navigateToPods', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Spy send method
     const sendMock = vi.spyOn(apiSender, 'send');
@@ -1333,12 +1544,18 @@ describe('Navigation', async () => {
     expect(sendMock).toBeCalledWith('navigate', { page: NavigationPage.PODS });
   });
   test('navigateToPod existing pod', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const podExistSpy = vi.spyOn(containerProviderRegistry, 'podExist');
@@ -1364,12 +1581,18 @@ describe('Navigation', async () => {
     expect(podExistSpy).toHaveBeenCalledOnce();
   });
   test('navigateToPod non-existent volume', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const podExistSpy = vi.spyOn(containerProviderRegistry, 'podExist');
@@ -1395,12 +1618,18 @@ describe('Navigation', async () => {
   });
 
   test('navigateToContribution existing contribution', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listSimpleContainer implementation
     const listContributionsSpy = vi.spyOn(contributionManager, 'listContributions');
@@ -1427,12 +1656,18 @@ describe('Navigation', async () => {
     expect(listContributionsSpy).toHaveBeenCalledOnce();
   });
   test('navigateToContribution non-existent contribution', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     // Mock listContributions implementation
     const listContributionsSpy = vi.spyOn(contributionManager, 'listContributions');
@@ -1457,12 +1692,18 @@ describe('Navigation', async () => {
   });
 
   test('navigateToWebview', async () => {
-    const api = extensionLoader.createApi('path', {
-      name: 'name',
-      publisher: 'publisher',
-      version: '1',
-      displayName: 'dname',
-    });
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi(
+      'path',
+      {
+        name: 'name',
+        publisher: 'publisher',
+        version: '1',
+        displayName: 'dname',
+      },
+      disposables,
+    );
 
     vi.mocked(webviewRegistry.listWebviews).mockReturnValue([
       {
@@ -1485,12 +1726,18 @@ describe('Navigation', async () => {
 });
 
 test('check listWebviews', async () => {
-  const api = extensionLoader.createApi('path', {
-    name: 'name',
-    publisher: 'publisher',
-    version: '1',
-    displayName: 'dname',
-  });
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi(
+    'path',
+    {
+      name: 'name',
+      publisher: 'publisher',
+      version: '1',
+      displayName: 'dname',
+    },
+    disposables,
+  );
 
   // Mock listSimpleWebviews implementation
   const listSimpleWebviewsSpy = vi.spyOn(webviewRegistry, 'listSimpleWebviews');
@@ -1517,25 +1764,30 @@ test('check listWebviews', async () => {
   // esnure we got result
   expect(result).toBeDefined();
   expect(result.length).toBe(2);
-  expect(result[0].id).toBe('123');
-  expect(result[0].viewType).toBe('customView');
-  expect(result[0].title).toBe('customTitle1');
-  expect(result[1].id).toBe('456');
-  expect(result[1].viewType).toBe('anotherView');
-  expect(result[1].title).toBe('customTitle2');
+  expect(result[0]?.id).toBe('123');
+  expect(result[0]?.viewType).toBe('customView');
+  expect(result[0]?.title).toBe('customTitle1');
+  expect(result[1]?.id).toBe('456');
+  expect(result[1]?.viewType).toBe('anotherView');
+  expect(result[1]?.title).toBe('customTitle2');
 });
 
 test('check version', async () => {
   const fakeVersion = '1.2.3.4';
   // mock electron.app.getVersion
   vi.mocked(app.getVersion).mockReturnValue(fakeVersion);
+  const disposables: IDisposable[] = [];
 
-  const api = extensionLoader.createApi('path', {
-    name: 'name',
-    publisher: 'publisher',
-    version: '1',
-    displayName: 'dname',
-  });
+  const api = extensionLoader.createApi(
+    'path',
+    {
+      name: 'name',
+      publisher: 'publisher',
+      version: '1',
+      displayName: 'dname',
+    },
+    disposables,
+  );
 
   const readPodmanVersion = api.version;
 
@@ -1545,36 +1797,54 @@ test('check version', async () => {
 
 test('listPods', async () => {
   const listPodsSpy = vi.spyOn(containerProviderRegistry, 'listPods');
-  const api = extensionLoader.createApi('path', {
-    name: 'name',
-    publisher: 'publisher',
-    version: '1',
-    displayName: 'dname',
-  });
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi(
+    'path',
+    {
+      name: 'name',
+      publisher: 'publisher',
+      version: '1',
+      displayName: 'dname',
+    },
+    disposables,
+  );
   await api.containerEngine.listPods();
   expect(listPodsSpy).toHaveBeenCalledOnce();
 });
 
 test('stopPod', async () => {
   const stopPodSpy = vi.spyOn(containerProviderRegistry, 'stopPod');
-  const api = extensionLoader.createApi('path', {
-    name: 'name',
-    publisher: 'publisher',
-    version: '1',
-    displayName: 'dname',
-  });
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi(
+    'path',
+    {
+      name: 'name',
+      publisher: 'publisher',
+      version: '1',
+      displayName: 'dname',
+    },
+    disposables,
+  );
   await api.containerEngine.stopPod('engine1', 'pod1');
   expect(stopPodSpy).toHaveBeenCalledWith('engine1', 'pod1');
 });
 
 test('removePod', async () => {
   const removePodSpy = vi.spyOn(containerProviderRegistry, 'removePod');
-  const api = extensionLoader.createApi('path', {
-    name: 'name',
-    publisher: 'publisher',
-    version: '1',
-    displayName: 'dname',
-  });
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi(
+    'path',
+    {
+      name: 'name',
+      publisher: 'publisher',
+      version: '1',
+      displayName: 'dname',
+    },
+    disposables,
+  );
   await api.containerEngine.removePod('engine1', 'pod1');
   expect(removePodSpy).toHaveBeenCalledWith('engine1', 'pod1');
 });
@@ -1594,11 +1864,17 @@ describe('authentication Provider', async () => {
   });
 
   test('basic registerAuthenticationProvider ', async () => {
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
+    // size is 0 for disposables
+    expect(disposables.length).toBe(0);
     api.authentication.registerAuthenticationProvider('provider1.id', 'Provider1 Label', providerMock, {
       supportsMultipleAccounts: true,
     });
+    // one disposable
+    expect(disposables.length).toBe(1);
 
     expect(authenticationProviderRegistry.registerAuthenticationProvider).toBeCalledWith(
       'provider1.id',
@@ -1610,7 +1886,9 @@ describe('authentication Provider', async () => {
 
   test('allows images option to be undefined or empty', async () => {
     vi.mocked(getBase64Image).mockReturnValue(BASE64ENCODEDIMAGE);
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     api.authentication.registerAuthenticationProvider('provider1.id', 'Provider1 Label', providerMock, {});
@@ -1619,7 +1897,7 @@ describe('authentication Provider', async () => {
     const call = vi.mocked(authenticationProviderRegistry.registerAuthenticationProvider).mock.calls[0];
 
     // get options from the call
-    const options = call[3];
+    const options = call?.[3];
 
     expect(options?.images?.logo).toBeUndefined();
     expect(options?.images?.icon).toBeUndefined();
@@ -1627,7 +1905,9 @@ describe('authentication Provider', async () => {
 
   test('allows images option to be single image', async () => {
     vi.mocked(getBase64Image).mockReturnValue(BASE64ENCODEDIMAGE);
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     api.authentication.registerAuthenticationProvider('provider1.id', 'Provider1 Label', providerMock, {
@@ -1640,7 +1920,7 @@ describe('authentication Provider', async () => {
     const call = vi.mocked(authenticationProviderRegistry.registerAuthenticationProvider).mock.calls[0];
 
     // get options from the call
-    const options = call[3];
+    const options = call?.[3];
 
     expect(options?.images?.logo).equals(BASE64ENCODEDIMAGE);
     expect(options?.images?.icon).equals(BASE64ENCODEDIMAGE);
@@ -1648,7 +1928,9 @@ describe('authentication Provider', async () => {
 
   test('allows images option to be light/dark image', async () => {
     vi.mocked(getBase64Image).mockReturnValue(BASE64ENCODEDIMAGE);
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     api.authentication.registerAuthenticationProvider('provider1.id', 'Provider1 Label', providerMock, {
@@ -1667,7 +1949,7 @@ describe('authentication Provider', async () => {
     const call = vi.mocked(authenticationProviderRegistry.registerAuthenticationProvider).mock.calls[0];
 
     // get options from the call
-    const options = call[3];
+    const options = call?.[3];
 
     const themeIcon = typeof options?.images?.icon === 'string' ? undefined : options?.images?.icon;
     expect(themeIcon).toBeDefined();
@@ -1681,9 +1963,11 @@ describe('authentication Provider', async () => {
 });
 
 test('createCliTool ', async () => {
-  const api = extensionLoader.createApi('/path', {});
-  expect(api).toBeDefined();
+  const disposables: IDisposable[] = [];
 
+  const api = extensionLoader.createApi('/path', {}, disposables);
+  expect(api).toBeDefined();
+  expect(disposables.length).toBe(0);
   const options: containerDesktopAPI.CliToolOptions = {
     name: 'tool-name',
     displayName: 'tool-display-name',
@@ -1696,13 +1980,16 @@ test('createCliTool ', async () => {
   vi.mocked(cliToolRegistry.createCliTool).mockReturnValue({ id: 'created' } as containerDesktopAPI.CliTool);
 
   const newCliTool = api.cli.createCliTool(options);
+  expect(disposables.length).toBe(1);
 
   expect(cliToolRegistry.createCliTool).toBeCalledWith(expect.objectContaining({ extensionPath: '/path' }), options);
   expect(newCliTool).toStrictEqual({ id: 'created' });
 });
 
 test('registerImageCheckerProvider ', async () => {
-  const api = extensionLoader.createApi('/path', {});
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi('/path', {}, disposables);
   expect(api).toBeDefined();
 
   const provider = {
@@ -1722,9 +2009,9 @@ test('registerImageCheckerProvider ', async () => {
   };
 
   vi.mocked(imageCheckerImpl.registerImageCheckerProvider).mockReturnValue(Disposable.create(() => {}));
-
+  expect(disposables.length).toBe(0);
   api.imageChecker.registerImageCheckerProvider(provider, { label: 'dummyLabel' });
-
+  expect(disposables.length).toBe(1);
   expect(imageCheckerImpl.registerImageCheckerProvider).toBeCalledWith(
     expect.objectContaining({ extensionPath: '/path' }),
     provider,
@@ -1761,7 +2048,9 @@ test('loadExtension with themes', async () => {
 
 describe('window', async () => {
   test('showOpenDialog ', async () => {
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const filePaths = ['/path-to-file1', '/path-to-file2'];
@@ -1772,12 +2061,14 @@ describe('window', async () => {
     const urisArray = uris as containerDesktopAPI.Uri[];
 
     expect(dialogRegistry.openDialog).toBeCalled();
-    expect(urisArray[0].fsPath).toContain('path-to-file1');
-    expect(urisArray[1].fsPath).toContain('path-to-file2');
+    expect(urisArray[0]?.fsPath).toContain('path-to-file1');
+    expect(urisArray[1]?.fsPath).toContain('path-to-file2');
   });
 
   test('showSaveDialog ', async () => {
-    const api = extensionLoader.createApi('/path', {});
+    const disposables: IDisposable[] = [];
+
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const filePath = '/path-to-file1';
@@ -1794,8 +2085,9 @@ describe('containerEngine', async () => {
   test('statsContainer ', async () => {
     vi.mocked(containerProviderRegistry.getContainerStats).mockResolvedValue(99);
     vi.mocked(containerProviderRegistry.stopContainerStats).mockResolvedValue(undefined);
+    const disposables: IDisposable[] = [];
 
-    const api = extensionLoader.createApi('/path', {});
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const disposable = await api.containerEngine.statsContainer('dummyEngineId', 'dummyContainerId', () => {});
@@ -1816,8 +2108,9 @@ describe('containerEngine', async () => {
 
   test('listImages without option ', async () => {
     vi.mocked(containerProviderRegistry.podmanListImages).mockResolvedValue([]);
+    const disposables: IDisposable[] = [];
 
-    const api = extensionLoader.createApi('/path', {});
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const images = await api.containerEngine.listImages();
@@ -1827,8 +2120,9 @@ describe('containerEngine', async () => {
 
   test('listImages with provider option', async () => {
     vi.mocked(containerProviderRegistry.podmanListImages).mockResolvedValue([]);
+    const disposables: IDisposable[] = [];
 
-    const api = extensionLoader.createApi('/path', {});
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const images = await api.containerEngine.listImages({
@@ -1846,8 +2140,9 @@ describe('containerEngine', async () => {
 
   test('listInfos without option', async () => {
     vi.mocked(containerProviderRegistry.listInfos).mockResolvedValue([]);
+    const disposables: IDisposable[] = [];
 
-    const api = extensionLoader.createApi('/path', {});
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const infos = await api.containerEngine.listInfos();
@@ -1857,8 +2152,9 @@ describe('containerEngine', async () => {
 
   test('listInfos with provider option', async () => {
     vi.mocked(containerProviderRegistry.listInfos).mockResolvedValue([]);
+    const disposables: IDisposable[] = [];
 
-    const api = extensionLoader.createApi('/path', {});
+    const api = extensionLoader.createApi('/path', {}, disposables);
     expect(api).toBeDefined();
 
     const infos = await api.containerEngine.listInfos({
@@ -1994,7 +2290,208 @@ test('load extensions sequentially', async () => {
 
   // check if loadExtension is called in order
   expect(loadExtensionMock).toBeCalledTimes(3);
-  expect(loadExtensionMock.mock.calls[0][0]).toBe(analyzedExtension1);
-  expect(loadExtensionMock.mock.calls[1][0]).toBe(analyzedExtension2);
-  expect(loadExtensionMock.mock.calls[2][0]).toBe(analyzedExtension3);
+  expect(loadExtensionMock.mock.calls[0]?.[0]).toBe(analyzedExtension1);
+  expect(loadExtensionMock.mock.calls[1]?.[0]).toBe(analyzedExtension2);
+  expect(loadExtensionMock.mock.calls[2]?.[0]).toBe(analyzedExtension3);
+});
+
+test('when loading registry registerRegistry, do not push to disposables', async () => {
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi('/path', {}, disposables);
+  expect(api).toBeDefined();
+
+  const fakeRegistry = {
+    source: 'fake',
+    serverUrl: 'http://fake',
+    username: 'foo',
+    // eslint-disable-next-line sonarjs/no-hardcoded-credentials
+    password: 'bar',
+    secret: 'baz',
+  };
+
+  api.registry.registerRegistry(fakeRegistry);
+
+  expect(disposables.length).toBe(0);
+});
+
+test('when registering a navigation route, should be pushed to disposables', () => {
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi('/path', {}, disposables);
+  expect(api).toBeDefined();
+
+  expect(disposables.length).toBe(0);
+  api.navigation.register('dummy-route-id', 'dummy-command-id');
+  expect(disposables.length).toBe(1);
+});
+
+test('withProgress should add the extension id to the routeId', async () => {
+  vi.mocked(progress.withProgress).mockResolvedValue(undefined);
+  const disposables: IDisposable[] = [];
+
+  const api = extensionLoader.createApi(
+    '/path',
+    {
+      publisher: 'pub',
+      name: 'dummy',
+    },
+    disposables,
+  );
+  expect(api).toBeDefined();
+
+  await api.window.withProgress<void>(
+    {
+      location: ProgressLocation.TASK_WIDGET,
+      title: 'Dummy title',
+      details: {
+        routeId: 'dummy-route-id',
+        routeArgs: ['hello', 'world'],
+      },
+    },
+    async () => {},
+  );
+
+  expect(progress.withProgress).toHaveBeenCalledWith(
+    {
+      location: ProgressLocation.TASK_WIDGET,
+      title: 'Dummy title',
+      details: {
+        routeId: 'pub.dummy.dummy-route-id',
+        routeArgs: ['hello', 'world'],
+      },
+    },
+    expect.any(Function),
+  );
+});
+
+describe('loading extension folders', () => {
+  const fileEntry = {
+    isDirectory: () => false,
+  } as fs.Dirent;
+  const nodeModulesEntry = {
+    isDirectory: () => true,
+    name: 'node_modules',
+  } as fs.Dirent;
+  const dirEntry = {
+    isDirectory: () => true,
+    name: 'extension1',
+  } as fs.Dirent;
+  const dirEntry2 = {
+    isDirectory: () => true,
+    name: 'extension2',
+  } as fs.Dirent;
+  const dirEntry3 = {
+    isDirectory: () => true,
+    name: 'extension3',
+  } as fs.Dirent;
+  const dirEntry4 = {
+    isDirectory: () => true,
+    name: 'extension4',
+  } as fs.Dirent;
+
+  describe('in dev mode', () => {
+    test('ignores files', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([fileEntry]);
+
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(0);
+    });
+    test('ignores node_modules folders', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([nodeModulesEntry]);
+
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(0);
+    });
+    test('ignores folders without package.json', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(0);
+    });
+
+    test('recognizes a plain extension when only ext/package.json is present', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValueOnce(false).mockReturnValueOnce(true);
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(1);
+      expect(folders[0]).toBe(path.join('path', 'extension1'));
+    });
+
+    test('recognizes as an api extension when only ext/packages/extension/package.json is present', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValueOnce(true).mockReturnValueOnce(true);
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(1);
+      expect(folders[0]).toBe(path.join('path', 'extension1', 'packages', 'extension'));
+    });
+
+    test('recognizes as an api extension when ext/package.json and ext/packages/extension/package.json are present', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValueOnce(true).mockReturnValueOnce(false);
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(1);
+      expect(folders[0]).toBe(path.join('path', 'extension1', 'packages', 'extension'));
+    });
+
+    test('works correctly for multiple different extensions, files and empty folders', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([fileEntry, dirEntry, dirEntry2, dirEntry3, dirEntry4]);
+      vi.spyOn(fs, 'existsSync')
+        // an api extension
+        .mockReturnValueOnce(true)
+        // an plain extension
+        .mockReturnValueOnce(false) // plain extension
+        // priority to an api extension
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(true) // priority to api extension
+        // ignore no package.json folders
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false);
+      const folders = await extensionLoader.readDevelopmentFolders('path');
+
+      expect(folders).length(3);
+      expect(folders[0]).toBe(path.join('path', 'extension1', 'packages', 'extension'));
+      expect(folders[1]).toBe(path.join('path', 'extension2'));
+      expect(folders[2]).toBe(path.join('path', 'extension3', 'packages', 'extension'));
+    });
+  });
+
+  describe('in prod mode', () => {
+    test('ignores files', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([fileEntry]);
+
+      const folders = await extensionLoader.readProductionFolders('path');
+
+      expect(folders).length(0);
+    });
+    test('ignores node_modules folders', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([nodeModulesEntry]);
+
+      const folders = await extensionLoader.readProductionFolders('path');
+
+      expect(folders).length(0);
+    });
+    test('recognizes a plain extension when only ext/package.json is present', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValueOnce(true);
+      const folders = await extensionLoader.readProductionFolders('path');
+
+      expect(folders).length(1);
+      expect(folders[0]).toBe(path.join('path', 'extension1', 'builtin', 'extension1.cdix'));
+    });
+    test('recognizes an api extension when ext/package.json is not present', async () => {
+      vi.spyOn(fs.promises, 'readdir').mockResolvedValue([dirEntry]);
+      vi.spyOn(fs, 'existsSync').mockReturnValueOnce(false);
+      const folders = await extensionLoader.readProductionFolders('path');
+
+      expect(folders).length(1);
+      expect(folders[0]).toBe(path.join('path', 'extension1', 'packages', 'extension', 'builtin', `extension1.cdix`));
+    });
+  });
 });

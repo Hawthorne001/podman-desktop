@@ -21,16 +21,10 @@ import { expect as playExpect } from '@playwright/test';
 
 import { handleConfirmationDialog } from '../../utility/operations';
 import { PodState } from '../core/states';
-import { NavigationBar } from '../workbench/navigation';
-import { BasePage } from './base-page';
+import { DetailsPage } from './details-page';
 import { PodsPage } from './pods-page';
 
-export class PodDetailsPage extends BasePage {
-  readonly labelName: Locator;
-  readonly heading: Locator;
-  readonly closeLink: Locator;
-  readonly backToPodsLink: Locator;
-  readonly podName: string;
+export class PodDetailsPage extends DetailsPage {
   readonly startButton: Locator;
   readonly stopButton: Locator;
   readonly restartButton: Locator;
@@ -42,71 +36,43 @@ export class PodDetailsPage extends BasePage {
   static readonly KUBE_TAB = 'Kube';
 
   constructor(page: Page, name: string) {
-    super(page);
-    this.podName = name;
-    this.labelName = page.getByLabel('name').and(page.getByText('Pod Details'));
-    this.heading = page.getByRole('heading', { name: this.podName });
-    this.closeLink = page.getByRole('link', { name: 'Close Details' });
-    this.backToPodsLink = page.getByRole('link', { name: 'Go back to Pods' });
-    this.startButton = this.page.getByRole('button').and(this.page.getByLabel('Start Pod', { exact: true }));
-    this.stopButton = this.page.getByRole('button').and(this.page.getByLabel('Stop Pod', { exact: true }));
-    this.restartButton = this.page.getByRole('button').and(this.page.getByLabel('Restart Pod', { exact: true }));
-    this.deleteButton = this.page.getByRole('button').and(this.page.getByLabel('Delete Pod', { exact: true }));
-  }
-
-  async activateTab(tabName: string): Promise<void> {
-    const tabItem = this.page.getByRole('link', { name: tabName });
-    await tabItem.waitFor({ state: 'visible', timeout: 2000 });
-    await tabItem.click();
+    super(page, name);
+    this.startButton = this.controlActions.getByRole('button').and(this.page.getByLabel('Start Pod', { exact: true }));
+    this.stopButton = this.controlActions.getByRole('button').and(this.page.getByLabel('Stop Pod', { exact: true }));
+    this.restartButton = this.controlActions
+      .getByRole('button')
+      .and(this.page.getByLabel('Restart Pod', { exact: true }));
+    this.deleteButton = this.controlActions
+      .getByRole('button')
+      .and(this.page.getByLabel('Delete Pod', { exact: true }));
   }
 
   async getState(): Promise<string> {
-    for (const state in PodState) {
-      const stateDiv = this.getPage().getByTitle(state.toUpperCase(), { exact: true });
-      if ((await stateDiv.count()) > 0) return state.toUpperCase();
+    const currentState = await this.header.getByRole('status').getAttribute('title');
+    for (const state of Object.values(PodState)) {
+      if (currentState === state) return state;
     }
+
     return PodState.Unknown;
   }
 
-  async startPod(failIfStarted = false): Promise<void> {
-    try {
-      await playExpect.poll(async () => await this.getState()).toBe(PodState.Exited);
-      await playExpect(this.startButton).toBeVisible();
-      await this.startButton.click();
-    } catch (error) {
-      if (failIfStarted) {
-        throw Error(`Pod is not stopped, its state is: ${await this.getState()}, start button not available: ${error}`);
-      }
-    }
+  async startPod(): Promise<void> {
+    await playExpect(this.startButton).toBeEnabled({ timeout: 10_000 });
+    await this.startButton.click();
   }
 
-  async stopPod(podToRun: string, failIfStopped = false): Promise<void> {
-    const navigationBar = new NavigationBar(this.page);
-    const pods = await navigationBar.openPods();
-    const podDetails = await pods.openPodDetails(podToRun);
-
-    await playExpect(podDetails.heading).toBeVisible();
-    await playExpect(podDetails.heading).toContainText(podToRun);
-
-    try {
-      await playExpect.poll(async () => await this.getState()).toBe(PodState.Running);
-      await playExpect(this.stopButton).toBeVisible();
-      await this.stopButton.click();
-    } catch (error) {
-      if (failIfStopped) {
-        throw Error(`Pod is not running, its state is: ${await this.getState()}, stop button not available: ${error}`);
-      }
-    }
+  async stopPod(): Promise<void> {
+    await playExpect(this.stopButton).toBeEnabled({ timeout: 10_000 });
+    await this.stopButton.click();
   }
 
   async restartPod(): Promise<void> {
-    await playExpect.poll(async () => await this.getState()).toBe(PodState.Running);
-    await playExpect(this.restartButton).toBeEnabled();
+    await playExpect(this.restartButton).toBeEnabled({ timeout: 20_000 });
     await this.restartButton.click();
   }
 
   async deletePod(): Promise<PodsPage> {
-    await playExpect(this.deleteButton).toBeEnabled();
+    await playExpect(this.deleteButton).toBeEnabled({ timeout: 10_000 });
     await this.deleteButton.click();
     await handleConfirmationDialog(this.page);
     return new PodsPage(this.page);

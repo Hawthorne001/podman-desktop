@@ -11,6 +11,11 @@ import { ExtensionsUtils } from './extensions-utils';
 
 // restricted category to display
 export let category: string | undefined = undefined;
+export let keywords: string[] = [];
+export let title = 'Available extensions';
+export let showEmptyScreen: boolean = true;
+export let oninstall: (extensionId: string) => void = () => {};
+export let ondetails: (extensionId: string) => void = () => {};
 
 // show installed extensions
 export let showInstalled: boolean = true;
@@ -24,6 +29,12 @@ const catalogExtensions: Readable<CatalogExtensionInfoUI[]> = derived(
       const filteredCategory = category;
       $catalogExtensionInfos = $catalogExtensionInfos.filter(catalogExtension =>
         catalogExtension.categories.includes(filteredCategory),
+      );
+    }
+    for (const keyword of keywords) {
+      const filteredKeyword = keyword;
+      $catalogExtensionInfos = $catalogExtensionInfos.filter(catalogExtension =>
+        catalogExtension.keywords.includes(filteredKeyword),
       );
     }
     if (!showInstalled) {
@@ -42,6 +53,11 @@ const catalogExtensions: Readable<CatalogExtensionInfoUI[]> = derived(
 );
 </script>
 
-<div class="flex bg-charcoal-700 text-left">
-  <CatalogExtensionList catalogExtensions="{$catalogExtensions}" />
+<div class="flex bg-[var(--pd-content-bg)] text-left">
+  <CatalogExtensionList
+    oninstall={oninstall}
+    ondetails={ondetails}
+    title={title}
+    showEmptyScreen={showEmptyScreen}
+    catalogExtensions={$catalogExtensions} />
 </div>

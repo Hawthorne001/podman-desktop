@@ -17,15 +17,21 @@
  ***********************************************************************/
 
 /**
- * The Podman Desktop API provides a way to interact with Podman Desktop.
+ * The Podman Desktop API is intended to be consumed by extensions interacting with Podman Desktop.
  *
- * This file `extension-api.d.ts` is automatically generated from typedoc comments
- * in the source code and provided [on our website](https://podman-desktop.io/api).
+ * This documentation is automatically generated from typedoc comments
+ * in the source code `extension-api.d.ts` and provided [on our website](https://podman-desktop.io/api).
+ *
+ * This type declaration file can be installed from [the npm registry](https://www.npmjs.com/package/@podman-desktop/api).
  *
  * For more information, see the main
  * [Podman Desktop developing extensions documentation](https://podman-desktop.io/docs/extensions/developing).
  *
  * @example
+ * ```shell
+ * $ npm install @podman-desktop/api
+ * ```
+ *
  * ```typescript
  * import * as api from '@podman-desktop/api';
  *
@@ -88,7 +94,7 @@ declare module '@podman-desktop/api' {
      * on dispose.
      * @param callOnDispose Function that disposes something.
      */
-    // eslint-disable-next-line @typescript-eslint/ban-types
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     constructor(callOnDispose: Function);
 
     /**
@@ -112,16 +118,42 @@ declare module '@podman-desktop/api' {
   }
 
   /**
-   * Event to subscribe
+   * Interface to subscribe specific events.
+   *
+   * @example
+   * This is an example for an hypothetic function `onDidValueChange` implementing
+   * the `Event` interface.
+   *
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * class MyValueManager {
+   *   private value: boolean | undefined = undefined;
+   *
+   *   private onChange(e: boolean) {
+   *     this.value = e;
+   *     console.log(this.value);
+   *   }
+   *
+   *   public init(subscriptions: api.Disposable[]) {
+   *     onDidValueChange(this.onChange, this, subscriptions);
+   *   }
+   * }
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *   const myValueManager = new MyValueManager();
+   *   myValueManager.init(extensionContext.subscriptions);
+   * }
+   * ```
    */
   export interface Event<T> {
     /**
      * @param listener The listener function will be called when the event happens.
      * @param thisArgs The `this`-argument which will be used when calling the event listener.
-     * @param disposables An array to which a {@link Disposable} will be added.
+     * @param disposables An array to which the resulting {@link Disposable} will be added.
      * @return A disposable which unsubscribes the event listener.
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any,  sonarjs/prefer-function-type
     (listener: (e: T) => any, thisArgs?: any, disposables?: Disposable[]): Disposable;
   }
 
@@ -139,7 +171,7 @@ declare module '@podman-desktop/api' {
     event: Event<T>;
     /**
      * To fire an event to the subscribers
-     * @param event The event to send to the registered listeners
+     * @param data The event to send to the registered listeners
      */
     fire(data: T): void;
     /**
@@ -168,6 +200,82 @@ declare module '@podman-desktop/api' {
      * A storage utility for secrets. Secrets are persisted across reloads.
      */
     readonly secrets: SecretStorage;
+  }
+
+  /**
+   * Represents an extension.
+   *
+   * To get an instance of an `Extension` use {@link extensions.getExtension getExtension}.
+   */
+  export interface Extension<T> {
+    /**
+     * The canonical extension identifier in the form of: `publisher.name`.
+     */
+    readonly id: string;
+
+    /**
+     * The uri of the directory containing the extension.
+     */
+    readonly extensionUri: Uri;
+
+    /**
+     * The absolute file path of the directory containing this extension. Shorthand
+     * notation for {@link Extension.extensionUri Extension.extensionUri.fsPath} (independent of the uri scheme).
+     */
+    readonly extensionPath: string;
+
+    /**
+     * The parsed contents of the extension's package.json.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    readonly packageJSON: any;
+
+    /**
+     * The public API exported by this extension (return value of `activate`).
+     * It is an invalid action to access this field before this extension has been activated.
+     */
+    readonly exports: T;
+  }
+
+  /**
+   * Namespace for dealing with installed extensions. Extensions are represented
+   * by an {@link Extension}-interface which enables reflection on them.
+   *
+   * Extension writers can provide APIs to other extensions by returning their API public
+   * surface from the `activate`-call.
+   *
+   * When depending on the API of another extension add an `extensionDependencies`-entry
+   * to `package.json`, and use the {@link extensions.getExtension getExtension}-function
+   * and the {@link Extension.exports exports}-property, like below:
+   *
+   * ```typescript
+   * const podmanExtension = extensions.getExtension('podman-desktop.podman');
+   * const podmanExtensionAPI = podmanExtension.exports;
+   *
+   * podmanExtensionAPI....
+   * ```
+   */
+  export namespace extensions {
+    /**
+     * Get an extension by its full identifier in the form of: `publisher.name`.
+     *
+     * @param extensionId An extension identifier.
+     * @returns An extension or `undefined`.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    export function getExtension<T = any>(extensionId: string): Extension<T> | undefined;
+
+    /**
+     * All extensions currently known to the system.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    export const all: readonly Extension<any>[];
+
+    /**
+     * An event which fires when `extensions.all` changes. This can happen when extensions are
+     * installed, uninstalled, enabled or disabled.
+     */
+    export const onDidChange: Event<void>;
   }
 
   /**
@@ -282,10 +390,17 @@ declare module '@podman-desktop/api' {
 
   export interface ContainerProviderConnection {
     name: string;
+    displayName?: string;
     type: 'docker' | 'podman';
     endpoint: ContainerProviderConnectionEndpoint;
+    shellAccess?: ProviderConnectionShellAccess;
     lifecycle?: ProviderConnectionLifecycle;
     status(): ProviderConnectionStatus;
+    vmType?: string;
+    /**
+     * the vmTypeDisplayName property cannot be set if vmType is undefined
+     */
+    vmTypeDisplayName?: string;
   }
 
   export interface PodCreatePortOptions {
@@ -297,11 +412,59 @@ declare module '@podman-desktop/api' {
   }
 
   export interface PodCreateOptions {
-    name: string;
+    /**
+     * Name is the name of the pod. If not provided, a name will be generated when the pod is created. Optional.
+     */
+    name?: string;
+    /**
+     * PortMappings is a set of ports to map into the infra container.
+     * As, by default, containers share their network with the infra container, this will forward the ports to the entire pod.
+     * Only available if NetNS is set to Bridge, Slirp, or Pasta.
+     */
     portmappings?: PodCreatePortOptions[];
+    /**
+     * Labels are key-value pairs that are used to add metadata to pods. Optional.
+     */
     labels?: { [key: string]: string };
     // Set the provider to use, if not we will try select the first one available (sorted in favor of Podman).
     provider?: ContainerProviderConnection;
+    /**
+     * Map of networks names to ids the container should join to.
+     * You can request additional settings for each network, you can set network aliases,
+     *
+     * @remarks
+     * {@link PodCreateOptions.netns.nsmode} need to be set to `bridge` to join a network
+     */
+    Networks?: {
+      [key: string]: {
+        aliases?: string[];
+        interface_name?: string;
+      };
+    };
+    /**
+     * Network namespace
+     */
+    netns?: {
+      /**
+       * NamespaceMode
+       * @example
+       * `bridge` indicates that the network backend (CNI/netavark) should be used.
+       * @example
+       * `pasta` indicates that a pasta network stack should be used.
+       */
+      nsmode: string;
+    };
+    /**
+     * ExitPolicy determines the pod's exit and stop behaviour.
+     * @example
+     * "continue": the pod continues running. This is the default policy
+     * when creating a pod.
+     *
+     * @example
+     * "stop": stop the pod when the last container exits. This is the
+     * default behaviour for play kube.
+     */
+    exit_policy?: string;
   }
 
   export interface ManifestCreateOptions {
@@ -313,6 +476,26 @@ declare module '@podman-desktop/api' {
     // Provider to use for the manifest creation, if not, we will try to select the first one available (similar to podCreate)
     provider?: ContainerProviderConnection;
   }
+
+  // Matches required API parameters of Podman options
+  export interface ManifestPushOptions {
+    /**
+     * The destination of the manifest list to push.
+     * this can be the same as 'name' or a different one.
+     * @example
+     * "quay.io/myrepo/myotherdestination"
+     */
+    destination: string;
+    /**
+     * The name of the manifest list to push
+     * @example
+     * "quay.io/myrepo/mymanifest"
+     */
+    name: string;
+    // Provider to use for the manifest pushing, if not, we will default to the first one available
+    provider?: ContainerProviderConnection;
+  }
+
   export interface ManifestInspectInfo {
     engineId: string;
     engineName: string;
@@ -516,9 +699,35 @@ declare module '@podman-desktop/api' {
     onDidUpdateDetectionChecks: Event<ProviderDetectionCheck[]>;
   }
 
+  /**
+   * The commands module provides functions to register and execute commands
+   *
+   * @example
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *
+   *   const myCommand = api.commands.registerCommand(
+   *     'extension-name.my-command',
+   *     (arg1: string, arg2: number) => {
+   *       console.log('my-command executed with', arg1, arg2);
+   *     },
+   *   );
+   *
+   *   extensionContext.subscriptions.push(myCommand);
+   *
+   *   // [...]
+   *
+   *   api.commands.executeCommand('extension-name.my-command', 'a-string', 1001);
+   * }
+   * ```
+   */
   export namespace commands {
     /**
      * Define a command, to be executed later, either by calling {@link commands.executeCommand} or by referencing its name in the `command` field of a {@link StatusBarItem}.
+     *
+     * For examples, see {@link commands} and {@link window.createStatusBarItem}.
      *
      * @param command the name of the command. The name must be unique over all extensions. It is recommended to prefix this name with the name of the extension, to avoid conflicts with commands from other extensions.
      * @param callback the command to execute
@@ -529,7 +738,9 @@ declare module '@podman-desktop/api' {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     export function registerCommand(command: string, callback: (...args: any[]) => any, thisArg?: any): Disposable;
     /**
-     * Execute a command, previously registered with {@link commands.registerCommand}
+     * Execute a command, previously registered with {@link commands.registerCommand}.
+     *
+     * For an example, see {@link commands}.
      *
      * @param command the name used for registering the command
      * @param rest the parameters to pass to the command
@@ -578,6 +789,179 @@ declare module '@podman-desktop/api' {
     connection: ContainerProviderConnection;
   }
 
+  /**
+   * Callback for openning shell session
+   */
+  export interface ProviderConnectionShellAccess {
+    /**
+     * Opens new session using ProviderConnectionShellAccessImpl class
+     * @example
+     * import * as api from '@podman-desktop/api';
+     *
+     * class ProviderConnectionShellAccessImpl implements ProviderConnectionShellAccess {
+     *  open(): ProviderConnectionShellAccessSession {
+     *    // This is client that will connect to your shell
+     *    #client = new Client();
+     *
+     *    // You need to listen to events from client and forward them to the caller by using the object returned below
+     *
+     *    return {
+     *      onData,
+     *      onError,
+     *      onEnd,
+     *      write,
+     *      resize,
+     *      close,
+     *    };
+     *  }
+     * }
+     *
+     * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+     *  const providerConnectionShellAccess = new ProviderConnectionShellAccessImpl(machineInfo);
+     *
+     *  // Create containerProviderConnection object
+     *  const containerProviderConnection: extensionApi.ContainerProviderConnection = {
+     *    ...
+     *    shellAccess: providerConnectionShellAccess,
+     *    ...
+     *  };
+     *
+     *  const disposable = provider.registerContainerProviderConnection(containerProviderConnection);
+     *  extensionContext.subscriptions.push(disposable);
+     * }
+     */
+    open(): ProviderConnectionShellAccessSession;
+  }
+
+  /**
+   * Callbacks for interaction with shell session
+   */
+  export interface ProviderConnectionShellAccessSession {
+    onData: Event<ProviderConnectionShellAccessData>;
+    onError: Event<ProviderConnectionShellAccessError>;
+    onEnd: Event<void>;
+    write(data: string | Uint8Array): void;
+    resize(dimensions: ProviderConnectionShellDimensions): void;
+    close(): void;
+  }
+
+  export interface ProviderConnectionShellDimensions {
+    rows: number;
+    cols: number;
+  }
+
+  export interface ProviderConnectionShellAccessError {
+    error: string;
+  }
+
+  export interface ProviderConnectionShellAccessData {
+    data: string;
+  }
+
+  /**
+   * the description of a file in an image filesystem layer
+   */
+  export interface ImageFile {
+    path: string;
+    type: 'directory' | 'symlink' | 'file';
+    // File mode encoded on 4 octal digits
+    mode: number;
+    uid: number;
+    gid: number;
+    size: number;
+    ctime: Date;
+    atime: Date;
+    mtime: Date;
+  }
+
+  /**
+   * the description of a symlink in an image filesystem layer
+   */
+  export interface ImageFileSymlink extends ImageFile {
+    type: 'symlink';
+    // path of the target file
+    linkPath: string;
+  }
+
+  /**
+   * a filesystem layer of an image as defined by [spec](https://github.com/opencontainers/image-spec/blob/main/spec.md)
+   */
+  export interface ImageFilesystemLayer {
+    /**
+     * unique id of the layer
+     */
+    id: string;
+    /**
+     * the command which created the layer
+     */
+    createdBy?: string;
+    /**
+     * files indicate the paths of the files added or modified in the layer
+     */
+    files?: ImageFile[];
+    /**
+     * whiteouts indicate the paths of the files to be deleted from previous layers.
+     */
+    whiteouts?: string[];
+    /**
+     * opaque whiteouts indicate the directories in which the content has to be completely deleted from previous layers.
+     */
+    opaqueWhiteouts?: string[];
+  }
+
+  /**
+   * the complete list of filesystem layers
+   */
+  export interface ImageFilesystemLayers {
+    layers: ImageFilesystemLayer[];
+  }
+
+  /**
+   * Interface to be implemented by image files providers
+   */
+  export interface ImageFilesCallbacks {
+    /**
+     *
+     * @param image Info about the image
+     * @param token a cancellation token the function can use to be informed when the caller asks for the operation to be cancelled
+     * @return the complete result of the layers, either synchronously of through a Promise
+     */
+    getFilesystemLayers(image: ImageInfo, token?: CancellationToken): ProviderResult<ImageFilesystemLayers>;
+  }
+
+  /**
+   * Provider returned to the extension when calling createImageFilesProvider
+   * Provides helper functions for building the response of the `createImageFilesProvider` callback
+   */
+  export interface ImageFilesProvider extends Disposable {
+    /**
+     * add a file to the layer
+     */
+    addFile(layer: ImageFilesystemLayer, opts: { path: string; mode: number; size: number }): ImageFilesProvider;
+    /**
+     * add a directory to the layer
+     */
+    addDirectory(layer: ImageFilesystemLayer, opts: { path: string; mode: number }): ImageFilesProvider;
+    /**
+     * add a symbolic link to the layer
+     */
+    addSymlink(layer: ImageFilesystemLayer, opts: { path: string; mode: number; linkPath: string }): ImageFilesProvider;
+    /**
+     * add a file or directory to remove from previous layers
+     * @param path
+     */
+    addWhiteout(layer: ImageFilesystemLayer, path: string): ImageFilesProvider;
+    /**
+     * add a complete directory to remove from previous layers
+     * @param path
+     */
+    addOpaqueWhiteout(layer: ImageFilesystemLayer, path: string): ImageFilesProvider;
+  }
+
+  export interface ImageFilesProviderMetadata {
+    readonly label: string;
+  }
+
   export namespace provider {
     export function createProvider(provider: ProviderOptions): Provider;
     export const onDidUpdateProvider: Event<ProviderEvent>;
@@ -599,6 +983,20 @@ declare module '@podman-desktop/api' {
       providerId: string,
       containerProviderConnection: ContainerProviderConnection,
     ): LifecycleContext;
+    /**
+     * @beta Register the extension as an Image Files provider.
+     *
+     * As an image files provider, a provider needs to implement a specific interface, so the core
+     * application can call the provider with specific tasks when necessary.
+     *
+     * @param imageFilesCallbacks an object implementing the `ImageFilesProvider` interface
+     * @param metadata optional metadata attached to this provider
+     * @return A disposable that unregisters this provider when being disposed
+     */
+    export function createImageFilesProvider(
+      imageFilesCallbacks: ImageFilesCallbacks,
+      metadata?: ImageFilesProviderMetadata,
+    ): ImageFilesProvider;
   }
 
   export interface ProxySettings {
@@ -607,14 +1005,72 @@ declare module '@podman-desktop/api' {
     noProxy: string | undefined;
   }
 
+  /**
+   * The proxy module provides functions to set and get (immediately and reactively) HTTP proxy configuration.
+   * Note that it is not possible to change the state (enabled or disabled) of the proxy settings from the API.
+   *
+   * @example
+   *
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *   const handleProxyConfiguration = (e: boolean | undefined, s: api.ProxySettings | undefined) => {
+   *     console.log(e, s);
+   *   }
+   *
+   *   let enabled: boolean | undefined = undefined;
+   *   let settings: api.ProxySettings | undefined = undefined;
+   *
+   *   // Configuration changes
+   *   extensionContext.subscriptions.push(
+   *     api.proxy.onDidStateChange((e: boolean) => {
+   *       enabled = e;
+   *       handleProxyConfiguration(enabled, settings);
+   *     }),
+   *     api.proxy.onDidUpdateProxy((s: api.ProxySettings) => {
+   *       settings = s;
+   *       handleProxyConfiguration(enabled, settings);
+   *     }),
+   *   );
+   *   // Initial configuration
+   *   enabled = api.proxy.isEnabled();
+   *   settings = api.proxy.getProxySettings();
+   *   handleProxyConfiguration(enabled, settings);
+   * }
+   * ```
+   */
   export namespace proxy {
+    /**
+     * Return the current settings of the HTTP proxy.
+     *
+     * For an example, see {@link proxy}.
+     */
     export function getProxySettings(): ProxySettings | undefined;
+    /**
+     * Register new HTTP proxy settings. Note that registering new settings does not change the state (enabled or disabled) of the proxy settings.
+     */
     export function setProxy(proxySettings: ProxySettings): Promise<void>;
-    // Podman Desktop has updated the settings, propagates the changes to the provider.
+    /**
+     * Listen for changes on the proxy settings. The listener will be called with the new settings
+     * every time the settings change.
+     *
+     * For examples, see {@link proxy} and {@link Event}.
+     */
     export const onDidUpdateProxy: Event<ProxySettings>;
 
-    // The state of the proxy
+    /**
+     * Return the current state (enabled or disabled) of the proxy settings.
+     *
+     * For an example, see {@link proxy}.
+     */
     export function isEnabled(): boolean;
+    /**
+     * Listen for changes on the proxy state (enabled or disabled). The listener will be called with the new state
+     * every time the state changes.
+     *
+     * For examples, see {@link proxy} and {@link Event}.
+     */
     export const onDidStateChange: Event<boolean>;
   }
 
@@ -807,6 +1263,39 @@ declare module '@podman-desktop/api' {
      * button.
      */
     cancellable?: boolean;
+
+    /**
+     * You may specify a navigation object, making the task having a
+     * navigate action that the user can trigger.
+     * @example
+     * ```ts
+     * import { window, type ProgressLocation } from '@podman-desktop/api';
+     *
+     * await window.withProgress<string>(
+     *     {
+     *       location: ProgressLocation.TASK_WIDGET,
+     *       title: 'My task',
+     *       details: {
+     *         routeId: 'dummy-route-id',
+     *         routeArgs: ['hello', 'world'],
+     *       }
+     *     },
+     *     async () => {
+     *       return 'dummy result';
+     *     },
+     *   );
+     * ```
+     */
+    details?: {
+      /**
+       * The routeId used in {@link navigation.register}
+       */
+      routeId: string;
+      /**
+       * The arguments to provide the route
+       */
+      routeArgs: string[];
+    };
   }
 
   /**
@@ -1725,6 +2214,24 @@ declare module '@podman-desktop/api' {
      * @param alignment The alignment of the item.
      * @param priority The priority of the item. Higher values mean more to the left or more to the right.
      * @return A new status bar item.
+     *
+     * @example
+     * ```typescript
+     * import * as api from '@podman-desktop/api';
+     *
+     * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+     *   const statusBarItem = api.window.createStatusBarItem();
+     *   statusBarItem.text = 'Information';
+     *   statusBarItem.tooltip = 'A problem occured';
+     *   statusBarItem.command = 'extension-name.my-command';
+     *   statusBarItem.iconClass = 'fa fa-exclamation-triangle';
+     *   extensionContext.subscriptions.push(
+     *     api.commands.registerCommand('extension-name.my-command', () => { console.log('command executed'); }),
+     *     statusBarItem,
+     *   );
+     *   statusBarItem.show();
+     * }
+     * ```
      */
     export function createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem;
 
@@ -1851,7 +2358,6 @@ declare module '@podman-desktop/api' {
 
     /**
      * Add a KubernetesGenerator to KubernetesGeneratorRegistry
-     * @param selector
      * @param provider the custom provider to add
      */
     export function registerKubernetesGenerator(provider: KubernetesGeneratorProvider): Disposable;
@@ -2164,6 +2670,12 @@ declare module '@podman-desktop/api' {
     Options?: { [key: string]: string };
   }
 
+  interface DeviceMapping {
+    CgroupPermissions: string;
+    PathInContainer: string;
+    PathOnHost: string;
+  }
+
   interface HostConfig {
     AutoRemove?: boolean;
     Binds?: string[];
@@ -2217,7 +2729,7 @@ declare module '@podman-desktop/api' {
     CpuQuota?: number;
     CpusetCpus?: string;
     CpusetMems?: string;
-    Devices?: unknown;
+    Devices?: DeviceMapping[];
     DeviceCgroupRules?: string[];
     DeviceRequests?: DeviceRequest[];
     DiskQuota?: number;
@@ -2651,7 +3163,7 @@ declare module '@podman-desktop/api' {
     /**
      * An object mapping ports to an empty object in the form: `{"<port>/<tcp|udp|sctp>": {}}`
      */
-    // eslint-disable-next-line @typescript-eslint/ban-types
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
     ExposedPorts?: { [port: string]: {} };
 
     /**
@@ -2786,6 +3298,10 @@ declare module '@podman-desktop/api' {
      * a string uniquely identifying the created container, which can be used to execute other methods on the container ({@link containerEngine.deleteContainer}, {@link containerEngine.inspectContainer}, {@link containerEngine.startContainer}, {@link containerEngine.stopContainer}, {@link containerEngine.logsContainer})
      */
     id: string;
+    /**
+     * the engineId where the container is running
+     */
+    engineId: string;
   }
 
   export interface WebviewInfo {
@@ -3299,8 +3815,9 @@ declare module '@podman-desktop/api' {
      * @param engineId the id of the engine managing the image, obtained from the result of {@link containerEngine.listImages}
      * @param id the id or name of the image on this engine, obtained from the result of {@link containerEngine.listImages}
      * @param filename the file on which to save the container image content
+     * @param token an optional cancellation token which will cancel saving the image on disk when the token is canceled
      */
-    export function saveImage(engineId: string, id: string, filename: string): Promise<void>;
+    export function saveImage(engineId: string, id: string, filename: string, token?: CancellationToken): Promise<void>;
 
     /**
      * List the container images. Only images from a final layer (no children) are returned.
@@ -3424,6 +3941,8 @@ declare module '@podman-desktop/api' {
     // Manifest related methods
     export function createManifest(options: ManifestCreateOptions): Promise<{ engineId: string; Id: string }>;
     export function inspectManifest(engineId: string, id: string): Promise<ManifestInspectInfo>;
+    export function pushManifest(options: ManifestPushOptions): Promise<void>;
+    export function removeManifest(engineId: string, id: string): Promise<void>;
   }
 
   /**
@@ -3683,7 +4202,7 @@ declare module '@podman-desktop/api' {
      * @param id The unique identifier of the provider.
      * @param label The human-readable name of the provider.
      * @param provider The authentication provider provider.
-     * @params options Additional options for the provider.
+     * @param options Additional options for the provider.
      * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
      */
     export function registerAuthenticationProvider(
@@ -3737,7 +4256,7 @@ declare module '@podman-desktop/api' {
     /**
      * Opens a link externally using the default application. Depending on the
      *
-     * @param target The uri that should be opened.
+     * @param uri The uri that should be opened.
      * @returns A promise indicating if open was successful.
      */
     export function openExternal(uri: Uri): Promise<boolean>;
@@ -4031,6 +4550,8 @@ declare module '@podman-desktop/api' {
     export function setValue(key: string, value: any, scope?: 'onboarding'): void;
   }
 
+  export type CliToolInstallationSource = 'extension' | 'external';
+
   /**
    * Options to create new CliTool instance and register it in podman desktop
    */
@@ -4047,9 +4568,17 @@ declare module '@podman-desktop/api' {
      * Passing in path will also help to show where the CLI tool is expected to be installed.
      * This is usually the ~/.local/share/containers/podman-desktop/extensions-storage directory.
      * Note: The expected value should not include 'v'.
+     * Note: If the version and path are not defined (= the tool is not installed), the install logic should be implemented
      */
-    version: string;
-    path: string;
+    version?: string;
+    path?: string;
+
+    /**
+     * How the cli tool has been installed
+     * - external: it has been installed by the user externally from podman desktop. Its update process is disable.
+     * - extension: it has been installed by podman desktop extension. It can be updated
+     */
+    installationSource?: CliToolInstallationSource;
   }
 
   /**
@@ -4061,6 +4590,7 @@ declare module '@podman-desktop/api' {
     markdownDescription?: string;
     images?: ProviderImages;
     path?: string;
+    installationSource?: CliToolInstallationSource;
   }
 
   export interface CliToolUpdate {
@@ -4068,25 +4598,44 @@ declare module '@podman-desktop/api' {
     doUpdate: (logger: Logger) => Promise<void>;
   }
 
+  export interface CliToolSelectUpdate {
+    selectVersion: () => Promise<string>;
+    doUpdate: (logger: Logger) => Promise<void>;
+  }
+
+  export interface CliToolInstaller {
+    selectVersion: () => Promise<string>;
+    doInstall: (logger: Logger) => Promise<void>;
+    doUninstall: (logger: Logger) => Promise<void>;
+  }
+
   export type CliToolState = 'registered';
 
-  export interface CliTool extends Disposable {
+  export interface CliTool extends CliToolInfo, Disposable {
+    state: CliToolState;
+    updateVersion(version: CliToolUpdateOptions): void;
+    onDidUpdateVersion: Event<string>;
+
+    onDidUninstall: Event<void>;
+
+    // register cli update flow
+    registerUpdate(update: CliToolUpdate | CliToolSelectUpdate): Disposable;
+
+    // register cli installer
+    registerInstaller(installer: CliToolInstaller): Disposable;
+  }
+
+  export interface CliToolInfo {
     id: string;
     name: string;
     displayName: string;
     markdownDescription: string;
-    state: CliToolState;
     images: ProviderImages;
+    version?: string;
     extensionInfo: {
       id: string;
       label: string;
     };
-
-    updateVersion(version: CliToolUpdateOptions): void;
-    onDidUpdateVersion: Event<string>;
-
-    // register cli update flow
-    registerUpdate(update: CliToolUpdate): Disposable;
   }
 
   /**
@@ -4102,6 +4651,23 @@ declare module '@podman-desktop/api' {
      * @returns CliTool instance
      */
     export function createCliTool(options: CliToolOptions): CliTool;
+
+    /**
+     * given an id, return the corresponding CLI Tool
+     * @param id cli tool
+     */
+    export function getCliTool(id: string): CliToolInfo | undefined;
+
+    /**
+     * All cli tools currently known to the system.
+     */
+    export const all: readonly CliToolInfo[];
+
+    /**
+     * An event which fires when `cli.all` changes. This can happen when cli are
+     * installed, uninstalled, enabled or disabled.
+     */
+    export const onDidChange: Event<void>;
   }
 
   /**
@@ -4178,6 +4744,8 @@ declare module '@podman-desktop/api' {
   }
 
   export namespace navigation {
+    // Navigate to the Dashboard page
+    export function navigateToDashboard(): Promise<void>;
     // Navigate to the Containers page
     export function navigateToContainers(): Promise<void>;
     // Navigate to the Container page
@@ -4228,6 +4796,42 @@ declare module '@podman-desktop/api' {
      * Navigate to the Edit Provider Container Connection page
      */
     export function navigateToEditProviderContainerConnection(connection: ProviderContainerConnection): Promise<void>;
+
+    /**
+     * Allow to define custom route for an extension.
+     *
+     * @remarks
+     * The commandId used must have been registered through {@link commands.registerCommand}
+     *
+     * @example
+     * ```ts
+     * import { navigation, commands } from '@podman-desktop/api';
+     *
+     * commands.registerCommand('redirect-download-command', (trackingId: string) => {
+     *   // todo: do something with the trackingId
+     * });
+     *
+     * // register the route
+     * navigation.register('download-page', 'redirect-download-command');
+     *
+     * // when needed call the navigate with the route id registered to
+     * // trigger the command
+     * navigation.navigate('download-page', 'dummy-tracking-id');
+     * ```
+     *
+     * @param routeId a unique string value that could be used in {@link navigation.navigate}
+     * @param commandId the command that will be executed on navigate
+     */
+    export function register(routeId: string, commandId: string): Disposable;
+
+    /**
+     * Allow extension to navigate to a custom route.
+     * The route needs to have been registered using {@link navigation.register}
+     *
+     * @param routeId the identifier of the route to use
+     * @param args the arguments to provide to the command linked to the routeId
+     */
+    export function navigate(routeId: string, ...args: unknown[]): Promise<void>;
   }
 
   /**

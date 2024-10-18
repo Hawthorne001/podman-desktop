@@ -18,10 +18,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { beforeEach } from 'node:test';
 
 import * as extensionApi from '@podman-desktop/api';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { KubectlDownload } from './download';
 import type { KubectlGithubReleaseArtifactMetadata, KubectlGitHubReleases } from './kubectl-github-releases';
@@ -66,6 +65,19 @@ const releases: KubectlGithubReleaseArtifactMetadata[] = resultREST.map(
   },
 );
 
+const unsortedResultREST = JSON.parse(
+  fsActual.readFileSync(path.resolve(__dirname, '../tests/resources/unsorted-release-all.json'), 'utf8'),
+);
+const unsortedReleases: KubectlGithubReleaseArtifactMetadata[] = unsortedResultREST.map(
+  (release: { name: string; tag_name: string; id: number }) => {
+    return {
+      label: release.name || release.tag_name,
+      tag: release.tag_name,
+      id: release.id,
+    };
+  },
+);
+
 beforeEach(() => {
   vi.resetAllMocks();
 });
@@ -85,19 +97,19 @@ vi.mock('@podman-desktop/api', () => {
   };
 });
 
-test('expect getLatestVersionAsset to return the first release from a list of releases', async () => {
-  grabLatestsReleasesMetadataMock.mockImplementation(() => {
-    return releases;
-  });
+test('expect getLatestVersionAsset to return the latest release from a list of releases', async () => {
+  grabLatestsReleasesMetadataMock.mockResolvedValue(unsortedReleases);
 
   // Expect the test to return the first release from the list (as the function simply returns the first one)
   const kubectlDownload = new KubectlDownload(extensionContext, kubectlGitHubReleasesMock, os);
   const result = await kubectlDownload.getLatestVersionAsset();
   expect(result).toBeDefined();
-  expect(result).toEqual(releases[0]);
+  expect(result.id).toEqual(131738959);
+  expect(result.label).toEqual('Kubernetes v1.29.0-rc.1');
+  expect(result.tag).toEqual('v1.29.0-rc.1');
 });
 
-test('pick the 4th option option in the quickpickmenu and expect it to return the github release information', async () => {
+test('pick the 6th option option in the quickpickmenu and expect it to return the github release information', async () => {
   grabLatestsReleasesMetadataMock.mockImplementation(() => {
     return releases;
   });
@@ -110,7 +122,7 @@ test('pick the 4th option option in the quickpickmenu and expect it to return th
   const kubectlDownload = new KubectlDownload(extensionContext, kubectlGitHubReleasesMock, os);
   const result = await kubectlDownload.promptUserForVersion();
   expect(result).toBeDefined();
-  expect(result).toEqual(releases[3]); // "4th" option was picked
+  expect(result).toEqual(releases[5]); // "6th" option was picked
 });
 
 test('test download of kubectl passes and that mkdir and executable mocks are called', async () => {

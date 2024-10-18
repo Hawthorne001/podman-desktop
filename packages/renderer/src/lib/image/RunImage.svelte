@@ -1,11 +1,12 @@
 <script lang="ts">
-import { faFolderOpen, faMinusCircle, faPlay, faPlusCircle } from '@fortawesome/free-solid-svg-icons';
-import { Button, Checkbox, ErrorMessage, Input, Tab } from '@podman-desktop/ui-svelte';
+import { faMinusCircle, faPlay, faPlusCircle } from '@fortawesome/free-solid-svg-icons';
+import type { OpenDialogOptions } from '@podman-desktop/api';
+import { Button, Checkbox, Dropdown, ErrorMessage, Input, Tab } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
 import { array2String } from '/@/lib/string/string.js';
-import type { ContainerCreateOptions, HostConfig } from '/@api/container-info';
+import type { ContainerCreateOptions, DeviceMapping, HostConfig } from '/@api/container-info';
 import type { ImageInspectInfo } from '/@api/image-inspect-info';
 import type { NetworkInspectInfo } from '/@api/network-info';
 
@@ -15,7 +16,8 @@ import { runImageInfo } from '../../stores/run-image-store';
 import { ContainerUtils } from '../container/container-utils';
 import type { ContainerInfoUI } from '../container/ContainerInfoUI';
 import { splitSpacesHandlingDoubleQuotes } from '../string/string';
-import FormPage from '../ui/FormPage.svelte';
+import EngineFormPage from '../ui/EngineFormPage.svelte';
+import FileInput from '../ui/FileInput.svelte';
 import NumberInput from '../ui/NumberInput.svelte';
 import { getTabUrl, isTabSelected } from '../ui/Util';
 import type { ImageInfoUI } from './ImageInfoUI';
@@ -48,6 +50,9 @@ let environmentVariables: { key: string; value: string }[] = [{ key: '', value: 
 let environmentFiles: string[] = [''];
 let volumeMounts: { source: string; target: string }[] = [{ source: '', target: '' }];
 let hostContainerPortMappings: { hostPort: PortInfo; containerPort: string }[] = [];
+let devices: { host: string; container: string; read: boolean; write: boolean; mknod: boolean }[] = [
+  { host: '', container: '', read: false, write: false, mknod: false },
+];
 
 let invalidName = false;
 let invalidPorts = false;
@@ -113,9 +118,9 @@ onMount(async () => {
   containerPortMapping = [];
 
   imageInspectInfo = await window.getImageInspect(image.engineId, image.id);
-  exposedPorts = Array.from(Object.keys(imageInspectInfo?.Config?.ExposedPorts || {}));
+  exposedPorts = Array.from(Object.keys(imageInspectInfo?.Config?.ExposedPorts ?? {}));
 
-  command = array2String(imageInspectInfo.Config?.Cmd || []);
+  command = array2String(imageInspectInfo.Config?.Cmd ?? []);
 
   if (imageInspectInfo.Config?.Entrypoint) {
     if (typeof imageInspectInfo.Config.Entrypoint === 'string') {
@@ -198,16 +203,6 @@ async function getPortsInfo(portDescriptor: string): Promise<string | undefined>
 }
 
 /**
- * Select an environment file
- */
-async function selectEnvironmentFile(index: number) {
-  const filePaths = await window.openDialog({ title: 'Select environment file' });
-  if (filePaths?.length === 1) {
-    environmentFiles[index] = filePaths[0];
-  }
-}
-
-/**
  * return a range of the same length as portDescriptor containing free ports
  * undefined if the portDescriptor range is not valid
  * e.g 5000:5001 -> 9000:9001
@@ -286,7 +281,7 @@ async function startContainer() {
     // filter variables withouts keys
     .filter(env => env.key)
     // no value, use empty string
-    .map(env => `${env.key}=${env.value || ''}`);
+    .map(env => `${env.key}=${env.value ?? ''}`);
 
   // filter empty files
   const EnvFiles = environmentFiles.filter(env => env);
@@ -340,6 +335,19 @@ async function startContainer() {
   const ReadonlyRootfs = readOnly;
   const Tty = useTty;
   const OpenStdin = useInteractive;
+
+  let Devices: DeviceMapping[] | undefined = devices
+    .filter(d => d.host)
+    .map(d => ({
+      PathOnHost: d.host,
+      PathInContainer: d.container !== '' ? d.container : d.host,
+      CgroupPermissions:
+        !d.read && !d.write && !d.mknod ? 'rwm' : `${d.read ? 'r' : ''}${d.write ? 'w' : ''}${d.mknod ? 'm' : ''}`,
+    }));
+  if (Devices.length === 0) {
+    Devices = undefined;
+  }
+
   const HostConfig: HostConfig = {
     Binds,
     AutoRemove: autoRemove,
@@ -351,6 +359,7 @@ async function startContainer() {
     CapAdd,
     CapDrop,
     NetworkMode,
+    Devices,
   };
 
   const Dns = dnsServers.filter(dns => dns);
@@ -498,18 +507,7 @@ function addHostContainerPorts() {
 
 function deleteHostContainerPorts(index: number) {
   hostContainerPortMappings = hostContainerPortMappings.filter((_, i) => i !== index);
-}
-
-async function browseFolders(index: number) {
-  // need to show the dialog to open a folder and then we update the source of the given index
-  const result = await window.openDialog({
-    title: 'Select a directory to mount in the container',
-    selectors: ['openDirectory'],
-  });
-
-  if (result?.length === 1) {
-    volumeMounts[index].source = result[0];
-  }
+  assertAllPortAreValid();
 }
 
 function addVolumeMount() {
@@ -557,6 +555,14 @@ function addExtraHost() {
 
 function deleteExtraHost(index: number) {
   extraHosts = extraHosts.filter((_, i) => i !== index);
+}
+
+function addDevice() {
+  devices = [...devices, { host: '', container: '', read: false, write: false, mknod: false }];
+}
+
+function deleteDevice(index: number) {
+  devices = devices.filter((_, i) => i !== index);
 }
 
 // called when user change the container's name
@@ -616,452 +622,518 @@ function onPortInput(event: Event, portInfo: PortInfo, updateUI: () => void) {
 
 async function assertAllPortAreValid(): Promise<void> {
   const invalidHostPorts = hostContainerPortMappings.filter(pair => pair.hostPort.error);
-  const invalidContainerPortMapping = containerPortMapping?.filter(port => port.error) || [];
+  const invalidContainerPortMapping = containerPortMapping?.filter(port => port.error) ?? [];
   invalidPorts = invalidHostPorts.length > 0 || invalidContainerPortMapping.length > 0;
 }
+
+const volumeDialogOptions: OpenDialogOptions = {
+  title: 'Select a directory to mount in the container',
+  selectors: ['openDirectory'],
+};
+
+const envDialogOptions: OpenDialogOptions = {
+  title: 'Select environment file',
+  selectors: ['openFile'],
+};
 </script>
 
 <Route path="/*">
   {#if dataReady}
-    <FormPage title="Create a container from image {imageDisplayName}:{image.tag}">
+    <EngineFormPage title="Create a container from image {imageDisplayName}:{image.tag}">
       <svelte:fragment slot="icon">
         <i class="fas fa-play fa-2x" aria-hidden="true"></i>
       </svelte:fragment>
-      <div slot="content" class="px-5 pb-5 min-w-full h-fit">
-        <div class="bg-charcoal-600 px-6 py-4 space-y-2 lg:px-8 sm:pb-6 xl:pb-8">
-          <div class="flex flex-row px-2 border-b border-charcoal-400">
-            <Tab
-              title="Basic"
-              selected="{isTabSelected($router.path, 'basic')}"
-              url="{getTabUrl($router.path, 'basic')}" />
-            <Tab
-              title="Advanced"
-              selected="{isTabSelected($router.path, 'advanced')}"
-              url="{getTabUrl($router.path, 'advanced')}" />
-            <Tab
-              title="Networking"
-              selected="{isTabSelected($router.path, 'networking')}"
-              url="{getTabUrl($router.path, 'networking')}" />
-            <Tab
-              title="Security"
-              selected="{isTabSelected($router.path, 'security')}"
-              url="{getTabUrl($router.path, 'security')}" />
-          </div>
-          <div>
-            <Route path="/basic" breadcrumb="Basic" navigationHint="tab">
-              <div class="h-96 overflow-y-auto pr-4">
-                <label for="modalContainerName" class="block mb-2 text-sm font-medium text-gray-400"
-                  >Container name:</label>
-                <Input
-                  on:input="{event => checkContainerName(event)}"
-                  bind:value="{containerName}"
-                  name="modalContainerName"
-                  id="modalContainerName"
-                  placeholder="Leave blank to generate a name"
-                  error="{containerNameError}" />
-                <label for="modalEntrypoint" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Entrypoint:</label>
-                <Input bind:value="{entrypoint}" name="modalEntrypoint" id="modalEntrypoint" />
-                <label for="modalCommand" class="pt-4 block mb-2 text-sm font-medium text-gray-400">Command:</label>
-                <Input bind:value="{command}" name="modalCommand" id="modalCommand" />
-                <label for="volumes" class="pt-4 block mb-2 text-sm font-medium text-gray-400">Volumes:</label>
-                <!-- Display the list of volumes -->
-                {#each volumeMounts as volumeMount, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input bind:value="{volumeMount.source}" placeholder="Path on the host" class="ml-2" />
-                    <Button
-                      type="link"
-                      title="Open dialog to select a directory"
-                      icon="{faFolderOpen}"
-                      on:click="{() => browseFolders(index)}" />
-                    <Input bind:value="{volumeMount.target}" placeholder="Path inside the container" class="ml-2" />
-                    <Button
-                      type="link"
-                      hidden="{index === volumeMounts.length - 1}"
-                      on:click="{() => deleteVolumeMount(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < volumeMounts.length - 1}"
-                      on:click="{addVolumeMount}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
+      <div slot="content" class="space-y-2">
+        <div class="flex flex-row px-2 border-b border-charcoal-400">
+          <Tab title="Basic" selected={isTabSelected($router.path, 'basic')} url={getTabUrl($router.path, 'basic')} />
+          <Tab
+            title="Advanced"
+            selected={isTabSelected($router.path, 'advanced')}
+            url={getTabUrl($router.path, 'advanced')} />
+          <Tab
+            title="Networking"
+            selected={isTabSelected($router.path, 'networking')}
+            url={getTabUrl($router.path, 'networking')} />
+          <Tab
+            title="Security"
+            selected={isTabSelected($router.path, 'security')}
+            url={getTabUrl($router.path, 'security')} />
+        </div>
+        <div>
+          <Route path="/basic" breadcrumb="Basic" navigationHint="tab">
+            <div class="h-96 overflow-y-auto pr-4">
+              <label
+                for="modalContainerName"
+                class="block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]">Container name:</label>
+              <Input
+                on:input={event => checkContainerName(event)}
+                bind:value={containerName}
+                name="modalContainerName"
+                id="modalContainerName"
+                placeholder="Leave blank to generate a name"
+                aria-label="Container Name"
+                error={containerNameError} />
+              <label
+                for="modalEntrypoint"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Entrypoint:</label>
+              <Input bind:value={entrypoint} name="modalEntrypoint" id="modalEntrypoint" aria-label="Entrypoint" />
+              <label
+                for="modalCommand"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]">Command:</label>
+              <Input bind:value={command} name="modalCommand" id="modalCommand" aria-label="Command" />
+              <label for="volumes" class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Volumes:</label>
+              <!-- Display the list of volumes -->
+              {#each volumeMounts as volumeMount, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <FileInput
+                    id="volumeMount.{index}"
+                    placeholder="Path on the host"
+                    bind:value={volumeMount.source}
+                    options={volumeDialogOptions}
+                    aria-label="volumeMount.{index}" />
+                  <Input bind:value={volumeMount.target} placeholder="Path inside the container" class="ml-2" />
+                  <Button
+                    type="link"
+                    hidden={index === volumeMounts.length - 1}
+                    on:click={() => deleteVolumeMount(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < volumeMounts.length - 1}
+                    on:click={addVolumeMount}
+                    icon={faPlusCircle} />
+                </div>
+              {/each}
 
-                <!-- add a label for each port-->
-                <label for="modalContainerName" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Port mapping:</label>
-                {#each exposedPorts as port, index}
-                  <div class="flex flex-row justify-center items-center w-full">
-                    <span class="text-sm flex-1 inline-block align-middle whitespace-nowrap text-gray-700"
-                      >Local port for {port}:</span>
-                    <Input
-                      bind:value="{containerPortMapping[index].port}"
-                      on:input="{event => onContainerPortMappingInput(event, index)}"
-                      placeholder="Enter value for port {port}"
-                      error="{containerPortMapping[index].error}"
-                      class="ml-2 w-full"
-                      title="{containerPortMapping[index].error}" />
-                  </div>
-                {/each}
+              <!-- add a label for each port-->
+              <label
+                for="modalContainerName"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Port mapping:</label>
+              {#each exposedPorts as port, index}
+                <div class="flex flex-row justify-center items-center w-full">
+                  <span
+                    class="text-sm flex-1 inline-block align-middle whitespace-nowrap text-[var(--pd-content-card-text)]"
+                    >Local port for {port}:</span>
+                  <Input
+                    bind:value={containerPortMapping[index].port}
+                    on:input={event => onContainerPortMappingInput(event, index)}
+                    placeholder="Enter value for port {port}"
+                    error={containerPortMapping[index].error}
+                    class="ml-2 w-full"
+                    title={containerPortMapping[index].error} />
+                </div>
+              {/each}
 
-                <Button on:click="{addHostContainerPorts}" icon="{faPlusCircle}" type="link">
-                  Add custom port mapping
-                </Button>
-                <!-- Display the list of existing hostContainerPortMappings -->
-                {#each hostContainerPortMappings as hostContainerPortMapping, index}
-                  <div class="flex flex-row justify-center w-full py-1">
-                    <Input
-                      bind:value="{hostContainerPortMapping.hostPort.port}"
-                      on:input="{event => onHostContainerPortMappingInput(event, index)}"
-                      aria-label="host port"
-                      placeholder="Host Port"
-                      error="{hostContainerPortMapping.hostPort.error}"
-                      title="{hostContainerPortMapping.hostPort.error}" />
-                    <Input
-                      bind:value="{hostContainerPortMapping.containerPort}"
-                      aria-label="container port"
-                      placeholder="Container Port"
-                      class="ml-2" />
-                    <Button type="link" on:click="{() => deleteHostContainerPorts(index)}" icon="{faMinusCircle}" />
-                  </div>
-                {/each}
-                <label for="modalEnvironmentVariables" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Environment variables:</label>
-                <!-- Display the list of existing environment variables -->
-                {#each environmentVariables as environmentVariable, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input bind:value="{environmentVariable.key}" placeholder="Name" class="w-full" />
+              <Button
+                on:click={addHostContainerPorts}
+                icon={faPlusCircle}
+                type="link"
+                aria-label="Add custom port mapping">
+                Add custom port mapping
+              </Button>
+              <!-- Display the list of existing hostContainerPortMappings -->
+              {#each hostContainerPortMappings as hostContainerPortMapping, index}
+                <div class="flex flex-row justify-center w-full py-1">
+                  <Input
+                    bind:value={hostContainerPortMapping.hostPort.port}
+                    on:input={event => onHostContainerPortMappingInput(event, index)}
+                    aria-label="host port"
+                    placeholder="Host Port"
+                    error={hostContainerPortMapping.hostPort.error}
+                    title={hostContainerPortMapping.hostPort.error} />
+                  <Input
+                    bind:value={hostContainerPortMapping.containerPort}
+                    aria-label="container port"
+                    placeholder="Container Port"
+                    class="ml-2" />
+                  <Button type="link" on:click={() => deleteHostContainerPorts(index)} icon={faMinusCircle} />
+                </div>
+              {/each}
+              <label
+                for="modalEnvironmentVariables"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Environment variables:</label>
+              <!-- Display the list of existing environment variables -->
+              {#each environmentVariables as environmentVariable, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input bind:value={environmentVariable.key} placeholder="Name" class="w-full" />
 
-                    <Input
-                      bind:value="{environmentVariable.value}"
-                      placeholder="Value (leave blank for empty)"
-                      class="ml-2" />
-                    <Button
-                      type="link"
-                      hidden="{index === environmentVariables.length - 1}"
-                      on:click="{() => deleteEnvVariable(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < environmentVariables.length - 1}"
-                      on:click="{addEnvVariable}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-              </div>
+                  <Input
+                    bind:value={environmentVariable.value}
+                    placeholder="Value (leave blank for empty)"
+                    class="ml-2" />
+                  <Button
+                    type="link"
+                    hidden={index === environmentVariables.length - 1}
+                    on:click={() => deleteEnvVariable(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < environmentVariables.length - 1}
+                    on:click={addEnvVariable}
+                    icon={faPlusCircle} />
+                </div>
+              {/each}
 
-              <label for="modalEnvironmentFiles" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
+              <label
+                for="modalEnvironmentFiles"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
                 >Environment files:</label>
               <!-- Display the list of existing environment files -->
               {#each environmentFiles as environmentFile, index}
                 <div class="flex flex-row justify-center items-center w-full py-1">
-                  <div class="w-full flex">
-                    <Input
-                      readonly
-                      clearable
-                      placeholder="Environment file containing KEY=VALUE items"
-                      bind:value="{environmentFile}"
-                      aria-label="environmentFile.{index}" />
-                    <Button
-                      on:click="{() => selectEnvironmentFile(index)}"
-                      id="filePath.{index}"
-                      aria-label="button-select-env-file-{index}">Browse ...</Button>
-                  </div>
+                  <FileInput
+                    id="filePath.{index}"
+                    placeholder="Environment file containing KEY=VALUE items"
+                    bind:value={environmentFile}
+                    options={envDialogOptions}
+                    aria-label="environmentFile.{index}" />
                   <Button
                     type="link"
-                    hidden="{index === environmentFiles.length - 1}"
+                    hidden={index === environmentFiles.length - 1}
                     aria-label="Delete env file at index {index}"
-                    on:click="{() => deleteEnvFile(index)}"
-                    icon="{faMinusCircle}" />
+                    on:click={() => deleteEnvFile(index)}
+                    icon={faMinusCircle} />
                   <Button
                     type="link"
-                    hidden="{index < environmentFiles.length - 1}"
+                    hidden={index < environmentFiles.length - 1}
                     aria-label="Add env file after index {index}"
-                    on:click="{addEnvFile}"
-                    icon="{faPlusCircle}" />
+                    on:click={addEnvFile}
+                    icon={faPlusCircle} />
                 </div>
               {/each}
-            </Route>
-            <Route path="/advanced" breadcrumb="Advanced" navigationHint="tab">
-              <div class="h-96 overflow-y-auto pr-4">
-                <!-- Use tty -->
-                <label for="containerTty" class="block mb-2 text-sm font-medium text-gray-400">Use TTY:</label>
-                <div class="flex flex-row justify-start items-center align-middle w-full text-gray-700 text-sm">
-                  <Checkbox bind:checked="{useTty}" class="mx-2" title="Attach a pseudo terminal" />
-                  Attach a pseudo terminal
-                </div>
-                <div class="flex flex-row justify-start items-center align-middle w-full text-gray-700 text-sm">
-                  <Checkbox bind:checked="{useInteractive}" class="mx-2" title="Use interactive" />
+            </div>
+          </Route>
+          <Route path="/advanced" breadcrumb="Advanced" navigationHint="tab">
+            <div class="h-96 overflow-y-auto pr-4">
+              <!-- Use tty -->
+              <label for="containerTty" class="block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Use TTY:</label>
+              <div class="flex flex-col text-[var(--pd-content-card-text)] text-sm ml-2">
+                <Checkbox bind:checked={useTty} title="Attach a pseudo terminal">Attach a pseudo terminal</Checkbox>
+                <Checkbox bind:checked={useInteractive} title="Use interactive">
                   Interactive: Keep STDIN open even if not attached
-                </div>
+                </Checkbox>
+              </div>
 
-                <!-- Specify user-->
-                <label for="containerUser" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Specify user to run container as:</label>
-                <div class="flex flex-row justify-center items-center w-full">
+              <!-- Specify user-->
+              <label
+                for="containerUser"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Specify user to run container as:</label>
+              <div class="flex flex-row justify-center items-center w-full">
+                <Input
+                  bind:value={runUser}
+                  placeholder="If you specify a username, user must exist in /etc/passwd file (use user id instead)"
+                  class="ml-2" />
+              </div>
+
+              <!-- Autoremove-->
+              <label
+                for="containerAutoRemove"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Auto removal of container:</label>
+              <Checkbox class="text-[var(--pd-content-card-text)] text-sm ml-2" bind:checked={autoRemove}>
+                Automatically remove the container when the process exits
+              </Checkbox>
+
+              <!-- RestartPolicy-->
+              <label
+                for="containerRestartPolicy"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Restart policy:</label>
+              <div
+                class="p-0 flex flex-row justify-start items-center align-middle w-full text-[var(--pd-content-card-text)]">
+                <span class="text-sm w-28 inline-block align-middle whitespace-nowrap">Policy name:</span>
+
+                <Dropdown class="w-full" name="restartPolicyName" bind:value={restartPolicyName}>
+                  <option value="">No restart</option>
+                  <option value="no">Do not restart automatically</option>
+                  <option value="always">Always restart</option>
+                  <option value="unless-stopped">Restart only if user has not manually stopped</option>
+                  <option value="on-failure">Restart only if exit code is non-zero</option>
+                </Dropdown>
+              </div>
+
+              <div
+                class="flex flex-row justify-center items-center w-full py-1 {restartPolicyName === 'on-failure'
+                  ? 'opacity-100'
+                  : 'opacity-20'}">
+                <span
+                  class="text-sm w-28 inline-block align-middle whitespace-nowrap text-[var(--pd-content-card-text)]"
+                  title="Number of times to retry before giving up.">Retries:</span>
+                <NumberInput
+                  minimum={0}
+                  bind:value={restartPolicyMaxRetryCount}
+                  type="integer"
+                  class="w-24 p-2"
+                  disabled={restartPolicyName !== 'on-failure'} />
+              </div>
+
+              <!-- devices -->
+              <label
+                for="modalDevices"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]">Devices:</label>
+              <!-- Display the list of existing devices -->
+              {#each devices as device, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
                   <Input
-                    bind:value="{runUser}"
-                    placeholder="If you specify a username, user must exist in /etc/passwd file (use user id instead)"
+                    bind:value={device.host}
+                    placeholder="Host Device"
+                    class="w-full"
+                    aria-label="device.host.{index}" />
+                  <Input
+                    bind:value={device.container}
+                    placeholder="Container Device (leave blank for same as host device)"
+                    class="ml-2"
+                    aria-label="device.container.{index}" />
+                  <div class="flex flew-row space-x-4 ml-2 text-sm">
+                    <Checkbox bind:checked={device.read} title="Read">Read</Checkbox>
+                    <Checkbox bind:checked={device.write} title="Write">Write</Checkbox>
+                    <Checkbox bind:checked={device.mknod} title="Mknod">Mknod</Checkbox>
+                  </div>
+                  <Button
+                    type="link"
+                    hidden={index === devices.length - 1}
+                    aria-label="Delete device at index {index}"
+                    on:click={() => deleteDevice(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < devices.length - 1}
+                    aria-label="Add device after index {index}"
+                    on:click={addDevice}
+                    icon={faPlusCircle} />
+                </div>
+              {/each}
+            </div>
+          </Route>
+
+          <Route path="/security" breadcrumb="Security" navigationHint="tab">
+            <div class="h-96 overflow-y-auto pr-4">
+              <!-- Privileged-->
+              <label
+                for="containerPrivileged"
+                class="block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]">Privileged:</label>
+              <Checkbox bind:checked={privileged} class="text-[var(--pd-content-card-text)] text-sm mx-2">
+                Turn off security<i class="pl-1 fas fa-exclamation-triangle"></i>
+              </Checkbox>
+
+              <!-- Read-Only -->
+              <label
+                for="containerReadOnly"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]">Read only:</label>
+              <Checkbox bind:checked={readOnly} class="text-[var(--pd-content-card-text)] text-sm mx-2">
+                Make containers root filesystem read-only
+              </Checkbox>
+
+              <label
+                for="ContainerSecurityOptions"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Security options (security-opt):</label>
+              <!-- Display the list of existing security options -->
+              {#each securityOpts as securityOpt, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input
+                    bind:value={securityOpt}
+                    placeholder="Enter a security option (Ex. seccomp=/path/to/profile.json)"
                     class="ml-2" />
+
+                  <Button
+                    type="link"
+                    hidden={index === securityOpts.length - 1}
+                    on:click={() => deleteSecurityOpt(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < securityOpts.length - 1}
+                    on:click={addSecurityOpt}
+                    icon={faPlusCircle} />
                 </div>
+              {/each}
 
-                <!-- Autoremove-->
-                <label for="containerAutoRemove" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Auto removal of container:</label>
-                <div class="flex flex-row justify-start items-center align-middle w-full text-gray-700 text-sm">
-                  <Checkbox bind:checked="{autoRemove}" class="mx-2" />
-                  Automatically remove the container when the process exits
+              <label
+                for="ContainerSecurityCapabilitiesAdd"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Capabilities:</label>
+
+              <label
+                for="ContainerSecurityCapabilitiesAdd"
+                class="pl-4 pt-2 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Add to the container (CapAdd):</label>
+              <!-- Display the list of existing capAdd -->
+              {#each capAdds as capAdd, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input bind:value={capAdd} placeholder="Enter a kernel capability (Ex. SYS_ADMIN)" class="ml-4" />
+
+                  <Button
+                    type="link"
+                    hidden={index === capAdds.length - 1}
+                    on:click={() => deleteCapAdd(index)}
+                    icon={faMinusCircle} />
+                  <Button type="link" hidden={index < capAdds.length - 1} on:click={addCapAdd} icon={faPlusCircle} />
                 </div>
+              {/each}
+              <label
+                for="ContainerSecurityCapabilitiesDrop"
+                class="pl-4 pt-2 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Drop from the container (CapDrop):</label>
+              <!-- Display the list of existing capDrop -->
+              {#each capDrops as capDrop, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input bind:value={capDrop} placeholder="Enter a kernel capability (Ex. SYS_ADMIN)" class="ml-4" />
 
-                <!-- RestartPolicy-->
-                <label for="containerRestartPolicy" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Restart policy:</label>
-                <div class="p-0 flex flex-row justify-start items-center align-middle w-full text-gray-700">
-                  <span class="text-sm w-28 inline-block align-middle whitespace-nowrap text-gray-700"
-                    >Policy name:</span>
-
-                  <select
-                    class="w-full p-2 outline-none text-sm bg-charcoal-800 rounded-sm text-gray-700 placeholder-gray-700"
-                    name="restartPolicyName"
-                    bind:value="{restartPolicyName}">
-                    <option value="">No restart</option>
-                    <option value="no">Do not restart automatically</option>
-                    <option value="always">Always restart</option>
-                    <option value="unless-stopped">Restart only if user has not manually stopped</option>
-                    <option value="on-failure">Restart only if exit code is non-zero</option>
-                  </select>
+                  <Button
+                    type="link"
+                    hidden={index === capDrops.length - 1}
+                    on:click={() => deleteCappDrop(index)}
+                    icon={faMinusCircle} />
+                  <Button type="link" hidden={index < capDrops.length - 1} on:click={addCapDrop} icon={faPlusCircle} />
                 </div>
+              {/each}
 
-                <div
-                  class="flex flex-row justify-center items-center w-full py-1 {restartPolicyName === 'on-failure'
-                    ? 'opacity-100'
-                    : 'opacity-20'}">
+              <!-- Specify user namespace-->
+              <label
+                for="containerUserNamespace"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Specify user namespace to use:</label>
+              <div class="flex flex-row justify-center items-center w-full">
+                <Input bind:value={userNamespace} placeholder="Enter a user namespace" class="ml-2 w-full" />
+              </div>
+            </div>
+          </Route>
+
+          <Route path="/networking" breadcrumb="Networking" navigationHint="tab">
+            <div class="h-96 overflow-y-auto pr-4">
+              <!-- hostname-->
+              <label
+                for="containerHostname"
+                class="block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Defines container hostname:</label>
+              <div class="flex flex-row justify-center items-center w-full">
+                <Input bind:value={hostname} placeholder="Must be a valid RFC 1123 hostname" class="ml-2" />
+              </div>
+
+              <!-- DNS -->
+              <label
+                for="ContainerDns"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Custom DNS server(s):</label>
+
+              {#each dnsServers as dnsServer, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input bind:value={dnsServer} placeholder="IP Address" class="ml-2" />
+
+                  <Button
+                    type="link"
+                    hidden={index === dnsServers.length - 1}
+                    on:click={() => deleteDnsServer(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < dnsServers.length - 1}
+                    on:click={addDnsServer}
+                    icon={faPlusCircle} />
+                </div>
+              {/each}
+
+              <label
+                for="containerExtraHosts"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Add extra hosts (appends to /etc/hosts file):</label>
+              <!-- Display the list of extra hosts -->
+              {#each extraHosts as extraHost, index}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <Input bind:value={extraHost.host} placeholder="Hostname" class="ml-2" />
+
+                  <Input bind:value={extraHost.ip} placeholder="IP Address" class="ml-2" />
+                  <Button
+                    type="link"
+                    hidden={index === extraHosts.length - 1}
+                    on:click={() => deleteExtraHost(index)}
+                    icon={faMinusCircle} />
+                  <Button
+                    type="link"
+                    hidden={index < extraHosts.length - 1}
+                    on:click={addExtraHost}
+                    icon={faPlusCircle} />
+                </div>
+              {/each}
+
+              <!-- Select network -->
+              <label
+                for="containerNetwork"
+                class="pt-4 block mb-2 text-sm font-medium text-[var(--pd-content-card-header-text)]"
+                >Select container networking:</label>
+              <div
+                class="p-0 flex flex-row justify-start items-center align-middle w-full text-[var(--pd-content-card-text)]">
+                <span class="text-sm w-28 inline-block align-middle whitespace-nowrap">Mode:</span>
+
+                <Dropdown class="w-full" name="providerChoice" bind:value={networkingMode}>
+                  <option value="bridge">Creates a network stack on the default bridge (default)</option>
+                  <option value="none">No networking</option>
+                  <option value="host">Use the host networking stack</option>
+                  <option value="choice-container">Use another container networking stack</option>
+                  <!-- display only if there is at least one network-->
+                  <option value="choice-network">User-defined network</option>
+                </Dropdown>
+              </div>
+
+              {#if networkingMode === 'choice-network'}
+                <div class="flex flex-row justify-center items-center w-full py-1">
                   <span
-                    class="text-sm w-28 inline-block align-middle whitespace-nowrap text-gray-700"
-                    title="Number of times to retry before giving up.">Retries:</span>
-                  <NumberInput
-                    minimum="{0}"
-                    bind:value="{restartPolicyMaxRetryCount}"
-                    class="w-24 p-2"
-                    disabled="{restartPolicyName !== 'on-failure'}" />
+                    class="text-sm w-28 inline-block align-middle whitespace-nowrap text-[var(--pd-content-card-text)]"
+                    >Network:</span>
+                  <Dropdown
+                    class="w-full"
+                    disabled={networkingMode !== 'choice-network'}
+                    name="networkingModeUserNetwork"
+                    bind:value={networkingModeUserNetwork}>
+                    {#each engineNetworks as network}
+                      <option value={network.Id}
+                        >{network.Name} (used by {Object.keys(network.Containers ?? {}).length} containers)</option>
+                    {/each}
+                  </Dropdown>
                 </div>
-              </div>
-            </Route>
-
-            <Route path="/security" breadcrumb="Security" navigationHint="tab">
-              <div class="h-96 overflow-y-auto pr-4">
-                <!-- Privileged-->
-                <label for="containerPrivileged" class="block mb-2 text-sm font-medium text-gray-400"
-                  >Privileged:</label>
-                <div class="flex flex-row justify-start items-center align-middle w-full text-gray-700 text-sm">
-                  <Checkbox bind:checked="{privileged}" class="mx-2" />
-                  Turn off security<i class="pl-1 fas fa-exclamation-triangle"></i>
+              {/if}
+              {#if networkingMode === 'choice-container'}
+                <div class="flex flex-row justify-center items-center w-full py-1">
+                  <span
+                    class="text-sm w-28 inline-block align-middle whitespace-nowrap text-[var(--pd-content-card-text)]"
+                    >Container:</span>
+                  <Dropdown
+                    class="w-full"
+                    disabled={networkingMode !== 'choice-container'}
+                    name="networkingModeUserContainer"
+                    bind:value={networkingModeUserContainer}>
+                    {#each engineContainers as container}
+                      <option value={container.id}>{container.name} ({container.shortId})</option>
+                    {/each}
+                  </Dropdown>
                 </div>
+              {/if}
+            </div>
+          </Route>
+        </div>
 
-                <!-- Read-Only -->
-                <label for="containerReadOnly" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Read only:</label>
-                <div class="flex flex-row justify-start items-center align-middle w-full text-gray-700 text-sm">
-                  <Checkbox bind:checked="{readOnly}" class="mx-2" />
-                  Make containers root filesystem read-only
-                </div>
-
-                <label for="ContainerSecurityOptions" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Security options (security-opt):</label>
-                <!-- Display the list of existing security options -->
-                {#each securityOpts as securityOpt, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input
-                      bind:value="{securityOpt}"
-                      placeholder="Enter a security option (Ex. seccomp=/path/to/profile.json)"
-                      class="ml-2" />
-
-                    <Button
-                      type="link"
-                      hidden="{index === securityOpts.length - 1}"
-                      on:click="{() => deleteSecurityOpt(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < securityOpts.length - 1}"
-                      on:click="{addSecurityOpt}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-
-                <label for="ContainerSecurityCapabilitiesAdd" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Capabilities:</label>
-
-                <label
-                  for="ContainerSecurityCapabilitiesAdd"
-                  class="pl-4 pt-2 block mb-2 text-sm font-medium text-gray-400">Add to the container (CapAdd):</label>
-                <!-- Display the list of existing capAdd -->
-                {#each capAdds as capAdd, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input bind:value="{capAdd}" placeholder="Enter a kernel capability (Ex. SYS_ADMIN)" class="ml-4" />
-
-                    <Button
-                      type="link"
-                      hidden="{index === capAdds.length - 1}"
-                      on:click="{() => deleteCapAdd(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < capAdds.length - 1}"
-                      on:click="{addCapAdd}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-                <label
-                  for="ContainerSecurityCapabilitiesDrop"
-                  class="pl-4 pt-2 block mb-2 text-sm font-medium text-gray-400"
-                  >Drop from the container (CapDrop):</label>
-                <!-- Display the list of existing capDrop -->
-                {#each capDrops as capDrop, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input
-                      bind:value="{capDrop}"
-                      placeholder="Enter a kernel capability (Ex. SYS_ADMIN)"
-                      class="ml-4" />
-
-                    <Button
-                      type="link"
-                      hidden="{index === capDrops.length - 1}"
-                      on:click="{() => deleteCappDrop(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < capDrops.length - 1}"
-                      on:click="{addCapDrop}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-
-                <!-- Specify user namespace-->
-                <label for="containerUserNamespace" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Specify user namespace to use:</label>
-                <div class="flex flex-row justify-center items-center w-full">
-                  <Input bind:value="{userNamespace}" placeholder="Enter a user namespace" class="ml-2 w-full" />
-                </div>
-              </div>
-            </Route>
-
-            <Route path="/networking" breadcrumb="Networking" navigationHint="tab">
-              <div class="h-96 overflow-y-auto pr-4">
-                <!-- hostname-->
-                <label for="containerHostname" class="block mb-2 text-sm font-medium text-gray-400"
-                  >Defines container hostname:</label>
-                <div class="flex flex-row justify-center items-center w-full">
-                  <Input bind:value="{hostname}" placeholder="Must be a valid RFC 1123 hostname" class="ml-2" />
-                </div>
-
-                <!-- DNS -->
-                <label for="ContainerDns" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Custom DNS server(s):</label>
-
-                {#each dnsServers as dnsServer, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input bind:value="{dnsServer}" placeholder="IP Address" class="ml-2" />
-
-                    <Button
-                      type="link"
-                      hidden="{index === dnsServers.length - 1}"
-                      on:click="{() => deleteDnsServer(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < dnsServers.length - 1}"
-                      on:click="{addDnsServer}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-
-                <label for="containerExtraHosts" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Add extra hosts (appends to /etc/hosts file):</label>
-                <!-- Display the list of extra hosts -->
-                {#each extraHosts as extraHost, index}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <Input bind:value="{extraHost.host}" placeholder="Hostname" class="ml-2" />
-
-                    <Input bind:value="{extraHost.ip}" placeholder="IP Address" class="ml-2" />
-                    <Button
-                      type="link"
-                      hidden="{index === extraHosts.length - 1}"
-                      on:click="{() => deleteExtraHost(index)}"
-                      icon="{faMinusCircle}" />
-                    <Button
-                      type="link"
-                      hidden="{index < extraHosts.length - 1}"
-                      on:click="{addExtraHost}"
-                      icon="{faPlusCircle}" />
-                  </div>
-                {/each}
-
-                <!-- Select network -->
-                <label for="containerNetwork" class="pt-4 block mb-2 text-sm font-medium text-gray-400"
-                  >Select container networking:</label>
-                <div class="p-0 flex flex-row justify-start items-center align-middle w-full text-gray-700">
-                  <span class="text-sm w-28 inline-block align-middle whitespace-nowrap text-gray-700">Mode:</span>
-
-                  <select
-                    class="w-full p-2 outline-none text-sm bg-charcoal-800 rounded-sm text-gray-700 placeholder-gray-700"
-                    name="providerChoice"
-                    bind:value="{networkingMode}">
-                    <option value="bridge">Creates a network stack on the default bridge (default)</option>
-                    <option value="none">No networking</option>
-                    <option value="host">Use the host networking stack</option>
-                    <option value="choice-container">Use another container networking stack</option>
-                    <!-- display only if there is at least one network-->
-                    <option value="choice-network">User-defined network</option>
-                  </select>
-                </div>
-
-                {#if networkingMode === 'choice-network'}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <span class="text-sm w-28 inline-block align-middle whitespace-nowrap text-gray-700">Network:</span>
-                    <select
-                      class="w-full p-2 outline-none text-sm bg-charcoal-800 rounded-sm text-gray-700 placeholder-gray-700"
-                      disabled="{networkingMode !== 'choice-network'}"
-                      name="networkingModeUserNetwork"
-                      bind:value="{networkingModeUserNetwork}">
-                      {#each engineNetworks as network}
-                        <option value="{network.Id}"
-                          >{network.Name} (used by {Object.keys(network.Containers || {}).length} containers)</option>
-                      {/each}
-                    </select>
-                  </div>
-                {/if}
-                {#if networkingMode === 'choice-container'}
-                  <div class="flex flex-row justify-center items-center w-full py-1">
-                    <span class="text-sm w-28 inline-block align-middle whitespace-nowrap text-gray-700"
-                      >Container:</span>
-                    <select
-                      class="w-full p-2 outline-none text-sm bg-charcoal-800 rounded-sm text-gray-700 placeholder-gray-700"
-                      disabled="{networkingMode !== 'choice-container'}"
-                      name="networkingModeUserContainer"
-                      bind:value="{networkingModeUserContainer}">
-                      {#each engineContainers as container}
-                        <option value="{container.id}">{container.name} ({container.shortId})</option>
-                      {/each}
-                    </select>
-                  </div>
-                {/if}
-              </div>
-            </Route>
-          </div>
-
-          <div class="pt-2 border-zinc-600 border-t-2"></div>
-          <Button on:click="{() => startContainer()}" class="w-full" icon="{faPlay}" bind:disabled="{invalidFields}">
-            Start Container
-          </Button>
-          <div aria-label="createError">
-            {#if createError}
-              <ErrorMessage class="py-2 text-sm" error="{createError}" />
-            {/if}
-          </div>
+        <div class="pt-2 border-zinc-600 border-t-2"></div>
+        <Button
+          on:click={() => startContainer()}
+          class="w-full"
+          icon={faPlay}
+          aria-label="Start Container"
+          bind:disabled={invalidFields}>
+          Start Container
+        </Button>
+        <div aria-label="createError">
+          {#if createError}
+            <ErrorMessage class="py-2 text-sm" error={createError} />
+          {/if}
         </div>
       </div>
-    </FormPage>
+    </EngineFormPage>
   {/if}
 </Route>

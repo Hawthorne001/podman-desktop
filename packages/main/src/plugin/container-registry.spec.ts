@@ -18,14 +18,16 @@
 
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
-import { PassThrough } from 'node:stream';
+import os from 'node:os';
+import path from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
 import * as streamPromises from 'node:stream/promises';
 
 import type * as podmanDesktopAPI from '@podman-desktop/api';
 import Dockerode from 'dockerode';
 import moment from 'moment';
 import nock from 'nock';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { ApiSenderType } from '/@/plugin/api.js';
 import type { Certificates } from '/@/plugin/certificates.js';
@@ -35,10 +37,12 @@ import { ImageRegistry } from '/@/plugin/image-registry.js';
 import type { Proxy } from '/@/plugin/proxy.js';
 import type { Telemetry } from '/@/plugin/telemetry/telemetry.js';
 import type { ContainerCreateOptions } from '/@api/container-info.js';
+import type { ContainerInspectInfo } from '/@api/container-inspect-info.js';
 import type { ImageInfo } from '/@api/image-info.js';
 import type { ProviderContainerConnectionInfo } from '/@api/provider-info.js';
 
 import * as util from '../util.js';
+import { CancellationTokenRegistry } from './cancellation-token-registry.js';
 import type { ConfigurationRegistry } from './configuration-registry.js';
 import type { ContainerCreateOptions as PodmanContainerCreateOptions, LibPod } from './dockerode/libpod-dockerode.js';
 import { LibpodDockerode } from './dockerode/libpod-dockerode.js';
@@ -50,6 +54,7 @@ const tar: { pack: (dir: string) => NodeJS.ReadableStream } = require('tar-fs');
 /* eslint-disable @typescript-eslint/no-empty-function */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable no-null/no-null */
+/* eslint-disable @typescript-eslint/consistent-type-imports */
 
 const fakeContainerWithComposeProject: Dockerode.ContainerInfo = {
   Id: '1234567890',
@@ -212,24 +217,123 @@ const fakeContainerInspectInfo: Dockerode.ContainerInspectInfo = {
   },
 };
 
+const fakeContainerInspectInfoWithVolume = {
+  Id: '1234',
+  Name: 'container2',
+  Image: 'image2',
+  Created: '1234567890',
+  State: {
+    Status: 'running',
+    Running: true,
+    Paused: false,
+    Restarting: false,
+    OOMKilled: false,
+    Dead: false,
+    Pid: 26852,
+    ExitCode: 0,
+    Error: '',
+    StartedAt: '2024-01-22T17:42:34.56349523+01:00',
+    FinishedAt: '0001-01-01T00:00:00Z',
+  },
+  Mounts: [
+    {
+      Destination: '/destination',
+      Mode: '',
+      Propagation: '',
+      RW: true,
+      Source: '/source',
+      Type: 'volume',
+      Name: 'vol1',
+    },
+  ],
+  HostConfig: {
+    NetworkMode: 'bridge',
+  },
+  Path: '',
+  Args: [],
+  ResolvConfPath: '',
+  HostnamePath: '',
+  HostsPath: '',
+  LogPath: '',
+  RestartCount: 0,
+  Driver: '',
+  Platform: '',
+  MountLabel: '',
+  ProcessLabel: '',
+  AppArmorProfile: '',
+  GraphDriver: {
+    Name: '',
+    Data: {
+      DeviceId: '',
+      DeviceName: '',
+      DeviceSize: '',
+    },
+  },
+  Config: {
+    Hostname: '',
+    Domainname: '',
+    User: '',
+    AttachStdin: false,
+    AttachStdout: false,
+    AttachStderr: false,
+    ExposedPorts: {},
+    Tty: false,
+    OpenStdin: false,
+    StdinOnce: false,
+    Env: [],
+    Cmd: [],
+    Image: '',
+    Volumes: {},
+    WorkingDir: '',
+    Entrypoint: undefined,
+    OnBuild: undefined,
+    Labels: {},
+  },
+  NetworkSettings: {
+    Bridge: '',
+    SandboxID: '',
+    HairpinMode: false,
+    LinkLocalIPv6Address: '',
+    LinkLocalIPv6PrefixLen: 0,
+    Ports: {},
+    SandboxKey: '',
+    SecondaryIPAddresses: undefined,
+    SecondaryIPv6Addresses: undefined,
+    EndpointID: '',
+    Gateway: '',
+    GlobalIPv6Address: '',
+    GlobalIPv6PrefixLen: 0,
+    IPAddress: '',
+    IPPrefixLen: 0,
+    IPv6Gateway: '',
+    MacAddress: '',
+    Networks: {},
+    Node: undefined,
+  },
+};
+
 class TestContainerProviderRegistry extends ContainerProviderRegistry {
-  public getMatchingEngine(engineId: string): Dockerode {
+  public override extractContainerEnvironment(container: ContainerInspectInfo): { [key: string]: string } {
+    return super.extractContainerEnvironment(container);
+  }
+
+  public override getMatchingEngine(engineId: string): Dockerode {
     return super.getMatchingEngine(engineId);
   }
 
-  public getMatchingContainer(engineId: string, containerId: string): Dockerode.Container {
+  public override getMatchingContainer(engineId: string, containerId: string): Dockerode.Container {
     return super.getMatchingContainer(engineId, containerId);
   }
 
-  public getMatchingPodmanEngine(engineId: string): InternalContainerProvider {
+  public override getMatchingPodmanEngine(engineId: string): InternalContainerProvider {
     return super.getMatchingPodmanEngine(engineId);
   }
 
-  public getMatchingPodmanEngineLibPod(engineId: string): LibPod {
+  public override getMatchingPodmanEngineLibPod(engineId: string): LibPod {
     return super.getMatchingPodmanEngineLibPod(engineId);
   }
 
-  public getMatchingContainerProvider(
+  public override getMatchingContainerProvider(
     providerContainerConnectionInfo: ProviderContainerConnectionInfo | podmanDesktopAPI.ContainerProviderConnection,
   ): InternalContainerProvider {
     return super.getMatchingContainerProvider(providerContainerConnectionInfo);
@@ -243,7 +347,9 @@ class TestContainerProviderRegistry extends ContainerProviderRegistry {
     this.containerProviders.set(name, provider);
   }
 
-  getMatchingEngineFromConnection(providerContainerConnectionInfo: ProviderContainerConnectionInfo): Dockerode {
+  override getMatchingEngineFromConnection(
+    providerContainerConnectionInfo: ProviderContainerConnectionInfo,
+  ): Dockerode {
     return super.getMatchingEngineFromConnection(providerContainerConnectionInfo);
   }
 
@@ -321,6 +427,10 @@ beforeEach(() => {
 
   const imageRegistry = new ImageRegistry({} as ApiSenderType, telemetry, certificates, proxy);
   containerRegistry = new TestContainerProviderRegistry(apiSender, configurationRegistry, imageRegistry, telemetry);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 test('tag should reject if no provider', async () => {
@@ -832,19 +942,19 @@ describe('listContainers', () => {
     expect(containers).toBeDefined();
     expect(containers).toHaveLength(1);
     const container = containers[0];
-    expect(container.engineId).toBe('podman1');
-    expect(container.engineName).toBe('podman');
-    expect(container.engineType).toBe('podman');
-    expect(container.StartedAt).toBe('2023-08-10T13:37:44.000Z');
-    expect(container.pod).toBeUndefined();
-    expect(container.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
-    expect(container.Command).toBe('httpd-foreground');
-    expect(container.Names).toStrictEqual(['/admiring_wing']);
-    expect(container.Image).toBe('docker.io/library/httpd:latest');
-    expect(container.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
-    expect(container.Created).toBe(1691674664);
-    expect(container.ImageBase64RepoTag).toBe('ZG9ja2VyLmlvL2xpYnJhcnkvaHR0cGQ6bGF0ZXN0');
-    expect(container.Ports).toStrictEqual([
+    expect(container?.engineId).toBe('podman1');
+    expect(container?.engineName).toBe('podman');
+    expect(container?.engineType).toBe('podman');
+    expect(container?.StartedAt).toBe('2023-08-10T13:37:44.000Z');
+    expect(container?.pod).toBeUndefined();
+    expect(container?.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
+    expect(container?.Command).toBe('httpd-foreground');
+    expect(container?.Names).toStrictEqual(['/admiring_wing']);
+    expect(container?.Image).toBe('docker.io/library/httpd:latest');
+    expect(container?.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
+    expect(container?.Created).toBe(1691674664);
+    expect(container?.ImageBase64RepoTag).toBe('ZG9ja2VyLmlvL2xpYnJhcnkvaHR0cGQ6bGF0ZXN0');
+    expect(container?.Ports).toStrictEqual([
       {
         IP: '',
         PrivatePort: 8080,
@@ -852,11 +962,11 @@ describe('listContainers', () => {
         Type: 'tcp',
       },
     ]);
-    expect(container.Labels).toStrictEqual({
+    expect(container?.Labels).toStrictEqual({
       'io.buildah.version': '1.30.0',
       maintainer: 'Podman Maintainers',
     });
-    expect(container.State).toBe('running');
+    expect(container?.State).toBe('running');
   });
 
   test('list containers with Docker API', async () => {
@@ -933,12 +1043,12 @@ describe('listContainers', () => {
     expect(containers).toBeDefined();
     expect(containers).toHaveLength(1);
     const container = containers[0];
-    expect(container.engineId).toBe('docker1');
-    expect(container.engineName).toBe('docker');
-    expect(container.engineType).toBe('docker');
+    expect(container?.engineId).toBe('docker1');
+    expect(container?.engineName).toBe('docker');
+    expect(container?.engineType).toBe('docker');
 
     // grab StartedAt from the containerWithDockerAPI
-    const started = container.StartedAt;
+    const started = container?.StartedAt;
 
     //convert with moment
     const diff = moment.now() - moment(started).toDate().getTime();
@@ -946,26 +1056,26 @@ describe('listContainers', () => {
 
     // expect delta to be 2 minutes
     expect(delta).toBe(2);
-    expect(container.pod).toBeUndefined();
+    expect(container?.pod).toBeUndefined();
 
-    expect(container.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
-    expect(container.Command).toBe('httpd-foreground');
-    expect(container.Names).toStrictEqual(['/admiring_wing']);
-    expect(container.Image).toBe('docker.io/library/httpd:latest');
-    expect(container.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
-    expect(container.Created).toBe(1691674664);
-    expect(container.Ports).toStrictEqual([
+    expect(container?.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
+    expect(container?.Command).toBe('httpd-foreground');
+    expect(container?.Names).toStrictEqual(['/admiring_wing']);
+    expect(container?.Image).toBe('docker.io/library/httpd:latest');
+    expect(container?.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
+    expect(container?.Created).toBe(1691674664);
+    expect(container?.Ports).toStrictEqual([
       {
         PrivatePort: 8080,
         PublicPort: 8080,
         Type: 'tcp',
       },
     ]);
-    expect(container.Labels).toStrictEqual({
+    expect(container?.Labels).toStrictEqual({
       'io.buildah.version': '1.30.0',
       maintainer: 'Podman Maintainers',
     });
-    expect(container.State).toBe('running');
+    expect(container?.State).toBe('running');
   });
 
   test('list containers with Podman API and null command value', async () => {
@@ -1038,18 +1148,18 @@ describe('listContainers', () => {
     expect(containers).toBeDefined();
     expect(containers).toHaveLength(1);
     const container = containers[0];
-    expect(container.engineId).toBe('podman1');
-    expect(container.engineName).toBe('podman');
-    expect(container.engineType).toBe('podman');
-    expect(container.StartedAt).toBe('2023-08-10T13:37:44.000Z');
-    expect(container.pod).toBeUndefined();
-    expect(container.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
-    expect(container.Command).toBe(undefined);
-    expect(container.Names).toStrictEqual(['/admiring_wing']);
-    expect(container.Image).toBe('docker.io/library/httpd:latest');
-    expect(container.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
-    expect(container.Created).toBe(1691674664);
-    expect(container.Ports).toStrictEqual([
+    expect(container?.engineId).toBe('podman1');
+    expect(container?.engineName).toBe('podman');
+    expect(container?.engineType).toBe('podman');
+    expect(container?.StartedAt).toBe('2023-08-10T13:37:44.000Z');
+    expect(container?.pod).toBeUndefined();
+    expect(container?.Id).toBe('31a4b282691420be2611817f203765402d8da7e13cd530f80a6ddd1bb4aa63b4');
+    expect(container?.Command).toBe(undefined);
+    expect(container?.Names).toStrictEqual(['/admiring_wing']);
+    expect(container?.Image).toBe('docker.io/library/httpd:latest');
+    expect(container?.ImageID).toBe('sha256:911d72fc5020723f0c003a134a8d2f062b4aea884474a11d1db7dcd28ce61d6a');
+    expect(container?.Created).toBe(1691674664);
+    expect(container?.Ports).toStrictEqual([
       {
         IP: '',
         PrivatePort: 8080,
@@ -1057,11 +1167,11 @@ describe('listContainers', () => {
         Type: 'tcp',
       },
     ]);
-    expect(container.Labels).toStrictEqual({
+    expect(container?.Labels).toStrictEqual({
       'io.buildah.version': '1.30.0',
       maintainer: 'Podman Maintainers',
     });
-    expect(container.State).toBe('running');
+    expect(container?.State).toBe('running');
   });
 });
 
@@ -1170,6 +1280,7 @@ describe('buildImage', () => {
 
     const connection: ProviderContainerConnectionInfo = {
       name: 'connection',
+      displayName: 'podman',
       type: 'docker',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1215,6 +1326,7 @@ describe('buildImage', () => {
 
     const connection: podmanDesktopAPI.ContainerProviderConnection = {
       name: 'connection',
+      displayName: 'podman',
       type: 'docker',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1251,6 +1363,7 @@ describe('buildImage', () => {
 
     const connection: ProviderContainerConnectionInfo = {
       name: 'podman',
+      displayName: 'podman',
       type: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1293,6 +1406,7 @@ describe('buildImage', () => {
 
     const connection: podmanDesktopAPI.ContainerProviderConnection = {
       name: 'podman',
+      displayName: 'podman',
       type: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1334,6 +1448,7 @@ describe('buildImage', () => {
 
     const connection: ProviderContainerConnectionInfo = {
       name: 'podman',
+      displayName: 'podman',
       type: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1370,6 +1485,7 @@ describe('buildImage', () => {
     // set providers with docker being first
     containerRegistry.addInternalProvider('podman1', {
       name: 'podman',
+      displayName: 'podman',
       id: 'podman1',
       api: dockerAPI,
       libpodApi: dockerAPI,
@@ -1384,6 +1500,7 @@ describe('buildImage', () => {
 
     const connection: podmanDesktopAPI.ContainerProviderConnection = {
       name: 'podman',
+      displayName: 'podman',
       type: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1433,6 +1550,7 @@ describe('buildImage', () => {
 
     const connection: ProviderContainerConnectionInfo = {
       name: 'podman',
+      displayName: 'podman',
       type: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -1479,10 +1597,6 @@ describe('buildImage', () => {
 
   test('verify buildImage receives correct args on non-Windows OS with q', async () => {
     await verifyBuildImage({ q: true });
-  });
-
-  test('verify buildImage receives correct args on non-Windows OS with cachefrom', async () => {
-    await verifyBuildImage({ cachefrom: 'quay.io/ubi9/ubi' });
   });
 
   test('verify buildImage receives correct args on non-Windows OS with cachefrom', async () => {
@@ -1789,17 +1903,17 @@ describe('listVolumes', () => {
     expect(volumes).toBeDefined();
     expect(volumes).toHaveLength(1);
     const volume = volumes[0];
-    expect(volume.engineId).toBe('podman1');
-    expect(volume.engineName).toBe('podman');
-    expect(volume.Volumes).toHaveLength(3);
+    expect(volume?.engineId).toBe('podman1');
+    expect(volume?.engineName).toBe('podman');
+    expect(volume?.Volumes).toHaveLength(3);
 
-    const volumeData = volume.Volumes[2];
+    const volumeData = volume?.Volumes[2];
 
-    expect(volumeData.Name).toBe('myFirstVolume');
+    expect(volumeData?.Name).toBe('myFirstVolume');
 
     // check UsageData is set (provided by system/df)
     // refcount is 1 as one container is using it
-    expect(volumeData.UsageData).toStrictEqual({
+    expect(volumeData?.UsageData).toStrictEqual({
       RefCount: 1,
       Size: 83990640,
     });
@@ -1910,18 +2024,18 @@ describe('listVolumes', () => {
     expect(volumes).toBeDefined();
     expect(volumes).toHaveLength(1);
     const volume = volumes[0];
-    expect(volume.engineId).toBe('podman1');
-    expect(volume.engineName).toBe('podman');
-    expect(volume.Volumes).toHaveLength(3);
+    expect(volume?.engineId).toBe('podman1');
+    expect(volume?.engineName).toBe('podman');
+    expect(volume?.Volumes).toHaveLength(3);
 
-    const volumeData = volume.Volumes[2];
+    const volumeData = volume?.Volumes[2];
 
-    expect(volumeData.Name).toBe('myFirstVolume');
+    expect(volumeData?.Name).toBe('myFirstVolume');
 
     // check UsageData is set (provided by system/df)
     // refcount is 1 as one container is using it
     // but size is -1 as we skip system df call
-    expect(volumeData.UsageData).toStrictEqual({
+    expect(volumeData?.UsageData).toStrictEqual({
       RefCount: 1,
       Size: -1,
     });
@@ -1983,9 +2097,9 @@ describe('listVolumes', () => {
     expect(volumes).toBeDefined();
     expect(volumes).toHaveLength(1);
     const volume = volumes[0];
-    expect(volume.engineId).toBe('podman1');
-    expect(volume.engineName).toBe('podman');
-    expect(volume.Volumes).toHaveLength(1);
+    expect(volume?.engineId).toBe('podman1');
+    expect(volume?.engineName).toBe('podman');
+    expect(volume?.Volumes).toHaveLength(1);
   });
 });
 
@@ -2064,6 +2178,7 @@ describe('listNetworks', () => {
     containerRegistry.addInternalProvider('podman', {
       name: 'podman',
       id: 'podman1',
+      displayName: 'podman',
       api,
       connection: {
         type: 'podman',
@@ -2077,10 +2192,10 @@ describe('listNetworks', () => {
     expect(networks).toBeDefined();
     expect(networks).toHaveLength(2);
     const network = networks[0];
-    expect(network.engineId).toBe('podman1');
-    expect(network.engineName).toBe('podman');
+    expect(network?.engineId).toBe('podman1');
+    expect(network?.engineName).toBe('podman');
 
-    expect(network.Name).toBe('podify');
+    expect(network?.Name).toBe('podify');
   });
 });
 
@@ -2097,6 +2212,7 @@ describe('createVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2132,6 +2248,7 @@ describe('createVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2167,6 +2284,7 @@ describe('createVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2202,6 +2320,7 @@ describe('createVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2214,6 +2333,7 @@ describe('createVolume', () => {
     const containerProviderConnection: podmanDesktopAPI.ContainerProviderConnection = {
       name: 'podman',
       type: 'podman',
+      displayName: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
       },
@@ -2250,6 +2370,7 @@ describe('deleteVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2296,6 +2417,7 @@ describe('deleteVolume', () => {
       connection: {
         type: 'podman',
         name: 'podman',
+        displayName: 'podman',
         endpoint: {
           socketPath: '/endpoint1.sock',
         },
@@ -2344,7 +2466,7 @@ test('container logs callback notified when messages arrive', async () => {
   expect(callback).toHaveBeenCalledWith('first-message', '');
   expect(callback).toHaveBeenCalledWith('data', 'log message');
   expect(callback).toHaveBeenCalledWith('end', '');
-  expect(telemetry.track).toHaveBeenCalled;
+  expect(telemetry.track).toHaveBeenCalled();
 });
 
 describe('createContainer', () => {
@@ -2380,6 +2502,7 @@ describe('createContainer', () => {
     const container = await containerRegistry.createContainer('podman1', { start: true });
 
     expect(container.id).toBe(createdId);
+    expect(container.engineId).toBe('podman1');
     expect(createContainerMock).toHaveBeenCalled();
     expect(startMock).toHaveBeenCalled();
   });
@@ -2532,6 +2655,47 @@ describe('createContainer', () => {
     expect(container.id).toBe(createdId);
     expect(createContainerMock).toHaveBeenCalled();
     expect(startMock).not.toHaveBeenCalled();
+  });
+
+  test('test error reported if start fails', async () => {
+    const createdId = '1234';
+
+    const startMock = vi.fn().mockRejectedValue(new Error('start failed'));
+    const inspectMock = vi.fn();
+    const createContainerMock = vi
+      .fn()
+      .mockResolvedValue({ id: createdId, start: startMock, inspect: inspectMock } as unknown as Dockerode.Container);
+
+    inspectMock.mockResolvedValue({
+      Config: {
+        Tty: false,
+        OpenStdin: false,
+      },
+    });
+
+    const fakeDockerode = {
+      createContainer: createContainerMock,
+    } as unknown as Dockerode;
+
+    containerRegistry.addInternalProvider('podman1', {
+      name: 'podman1',
+      id: 'podman1',
+      connection: {
+        type: 'podman',
+      },
+      api: fakeDockerode,
+    } as InternalContainerProvider);
+
+    let error: unknown | undefined;
+    try {
+      await containerRegistry.createContainer('podman1', { start: true });
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeDefined();
+    expect(createContainerMock).toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalled();
   });
 });
 
@@ -2902,6 +3066,7 @@ test('createNetwork', async () => {
     api,
     connection: {
       type: 'podman',
+      displayName: 'podman',
       name: 'podman',
       endpoint: {
         socketPath: '/endpoint1.sock',
@@ -2937,6 +3102,7 @@ test('setupConnectionAPI with errors', async () => {
     id: 'podman1',
     connection: {
       type: 'podman',
+      displayName: 'podman',
       name: 'podman',
       endpoint: {
         socketPath: 'http://localhost',
@@ -2947,6 +3113,7 @@ test('setupConnectionAPI with errors', async () => {
 
   const providerConnectionInfo: podmanDesktopAPI.ContainerProviderConnection = {
     name: 'podman',
+    displayName: 'podman',
     type: 'podman',
     endpoint: {
       socketPath: '/endpoint1.sock',
@@ -3005,7 +3172,7 @@ test('setupConnectionAPI with errors', async () => {
   // filter calls to find the one with container-started-event
   const containerStartedEventCalls = allCalls.filter(call => call[0] === 'container-started-event');
   expect(containerStartedEventCalls).toHaveLength(1);
-  expect(containerStartedEventCalls[0][1]).toBe(fakeId);
+  expect(containerStartedEventCalls[0]?.[1]).toBe(fakeId);
 
   stream2.end();
 
@@ -3020,6 +3187,7 @@ test('setupConnectionAPI with errors after machine being removed', async () => {
     connection: {
       type: 'podman',
       name: 'podman',
+      displayName: 'podman',
       endpoint: {
         socketPath: 'http://localhost',
       },
@@ -3032,6 +3200,7 @@ test('setupConnectionAPI with errors after machine being removed', async () => {
 
   const providerConnectionInfo: podmanDesktopAPI.ContainerProviderConnection = {
     name: 'podman',
+    displayName: 'podman',
     type: 'podman',
     endpoint: {
       socketPath: '/endpoint1.sock',
@@ -3097,6 +3266,54 @@ test('check handleEvents with loadArchive', async () => {
   expect(apiSender.send).toBeCalledWith('image-loadfromarchive-event', '123456');
 });
 
+test('check volume mounted is replicated when executing replicatePodmanContainer with named volume', async () => {
+  const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+  const createPodmanContainerMock = vi.fn();
+  const fakeLibPod = {
+    createPodmanContainer: createPodmanContainerMock,
+  } as unknown as LibPod;
+
+  const inspectMock = vi.fn().mockResolvedValue(fakeContainerInspectInfoWithVolume);
+
+  const dockerodeContainer = {
+    inspect: inspectMock,
+  } as unknown as Dockerode.Container;
+
+  vi.spyOn(dockerAPI, 'getContainer').mockReturnValue(dockerodeContainer);
+
+  // set providers with docker being first
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman',
+    id: 'podman1',
+    api: dockerAPI,
+    libpodApi: fakeLibPod,
+    connection: {
+      type: 'podman',
+    },
+  } as unknown as InternalContainerProvider);
+
+  await containerRegistry.replicatePodmanContainer(
+    {
+      engineId: 'podman1',
+      id: 'id',
+    },
+    {
+      engineId: 'podman1',
+    },
+    {},
+  );
+
+  expect(createPodmanContainerMock).toBeCalledWith({
+    command: fakeContainerInspectInfo.Config.Cmd,
+    entrypoint: fakeContainerInspectInfo.Config.Entrypoint,
+    env: {},
+    image: fakeContainerInspectInfo.Config.Image,
+    mounts: [],
+    volumes: [{ Dest: '/destination', Name: 'vol1' }],
+  });
+});
+
 test('check volume mounted is replicated when executing replicatePodmanContainer', async () => {
   const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
 
@@ -3141,7 +3358,36 @@ test('check volume mounted is replicated when executing replicatePodmanContainer
     env: {},
     image: fakeContainerInspectInfo.Config.Image,
     mounts: fakeContainerInspectInfo.Mounts,
+    volumes: [],
   });
+});
+
+test('test that pushManifest does not error', async () => {
+  const pushManifestMock = vi.fn();
+
+  const fakeLibPod = {
+    podmanPushManifest: pushManifestMock,
+  } as unknown as LibPod;
+
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman',
+    id: 'podman1',
+    libpodApi: fakeLibPod,
+    connection: {
+      type: 'podman',
+    },
+  } as unknown as InternalContainerProvider);
+
+  // Spy on the pushManifest function
+  const spyPushManifest = vi.spyOn(fakeLibPod, 'podmanPushManifest');
+
+  const result = await containerRegistry.pushManifest({ name: 'testid1', destination: 'testid1' });
+
+  // Expect PushManifest to be called
+  expect(spyPushManifest).toHaveBeenCalled();
+
+  // Expect to not error
+  expect(result).toBeUndefined();
 });
 
 test('check that createManifest returns an Id value after running podmanCreateManifest', async () => {
@@ -3193,6 +3439,7 @@ test('check that createManifest errors with The matching provider does not suppo
 
   const containerProviderConnection: podmanDesktopAPI.ContainerProviderConnection = {
     name: 'podman1',
+    displayName: 'podman',
     endpoint: {
       socketPath: 'podman.sock',
     },
@@ -3261,6 +3508,7 @@ test('check createPod uses running podman connection if ContainerProviderConnect
 
   const containerProviderConnection: podmanDesktopAPI.ContainerProviderConnection = {
     name: 'podman1',
+    displayName: 'podman',
     endpoint: {
       socketPath: 'podman.sock',
     },
@@ -3302,6 +3550,7 @@ test('check createPod uses running podman connection if ProviderContainerConnect
 
   const containerProviderConnection: ProviderContainerConnectionInfo = {
     name: 'podman1',
+    displayName: 'podman1',
     endpoint: {
       socketPath: 'podman.sock',
     },
@@ -3391,10 +3640,10 @@ test('list pods', async () => {
   expect(pods).toBeDefined();
   expect(pods).toHaveLength(1);
   const pod = pods[0];
-  expect(pod.engineId).toBe('podman1');
-  expect(pod.engineName).toBe('podman');
-  expect(pod.kind).toBe('podman');
-  expect(pod.Labels).toStrictEqual({
+  expect(pod?.engineId).toBe('podman1');
+  expect(pod?.engineName).toBe('podman');
+  expect(pod?.kind).toBe('podman');
+  expect(pod?.Labels).toStrictEqual({
     key1: 'value1',
     key2: 'value2',
   });
@@ -3622,7 +3871,7 @@ describe('getContainerCreateMountOptionFromBind', () => {
   function verifyGetContainerCreateMountOptionFromBind(options: OptionFromBindOptions): void {
     let bind = `${options.source}:${options.destination}`;
     const mountOptions = ['rbind'];
-    if (options.mode || options.propagation) {
+    if (options.mode ?? options.propagation) {
       bind += ':';
       if (options.mode) {
         mountOptions.push(options.mode);
@@ -3794,9 +4043,9 @@ test('list images with podmanListImages correctly', async () => {
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
-  expect(image.Id).toBe('sha256:dummyImageId');
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
+  expect(image?.Id).toBe('sha256:dummyImageId');
 });
 
 test('expect images with podmanListImages to also include History as well as engineId and engineName', async () => {
@@ -3827,9 +4076,9 @@ test('expect images with podmanListImages to also include History as well as eng
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
-  expect(image.History).toStrictEqual(['history1', 'history2']);
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
+  expect(image?.History).toStrictEqual(['history1', 'history2']);
 });
 
 test('expect images with podmanListImages to also include Digest as engineId and engineName', async () => {
@@ -3860,9 +4109,9 @@ test('expect images with podmanListImages to also include Digest as engineId and
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
-  expect(image.Digest).toBe('dummyDigest');
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
+  expect(image?.Digest).toBe('dummyDigest');
 });
 
 test('If image does not have Digest in list images, expect the Digest to be sha256:ID', async () => {
@@ -3895,9 +4144,9 @@ test('If image does not have Digest in list images, expect the Digest to be sha2
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
-  expect(image.Digest).toBe('sha256:c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2');
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
+  expect(image?.Digest).toBe('sha256:c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2');
 });
 
 test('expect to fall back to compat api images if podman provider does not have libpodApi', async () => {
@@ -3933,7 +4182,7 @@ test('expect to fall back to compat api images if podman provider does not have 
   // ensure the field are correct
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
-  expect(images[0].Id).toBe('dummyImageId2');
+  expect(images[0]?.Id).toBe('dummyImageId2');
 });
 
 test('expect a blank array if there is no api or libpod API when doing podmanListImages', async () => {
@@ -4488,6 +4737,18 @@ test('manifest is listed as true with podmanListImages correctly', async () => {
     Containers: 0,
   };
 
+  // Purposely set isManifestList to false
+  const manifestImageWithIsManifestListFalse = {
+    ...manifestImage,
+    isManifestList: false,
+  };
+
+  // Purpose set isManifestList to true
+  const manifestImageWithIsManifestListTrue = {
+    ...manifestImage,
+    isManifestList: true,
+  };
+
   const regularImage = {
     Id: 'ee301c921b8aadc002973b2e0c3da17d701dcd994b606769a7e6eaa100b81d44',
     Labels: {},
@@ -4505,16 +4766,47 @@ test('manifest is listed as true with podmanListImages correctly', async () => {
     History: ['testdomain.io/library/hello:latest'],
   };
 
-  const imagesList = [manifestImage, regularImage];
+  const inspectManifestMock = vi.fn().mockResolvedValue({
+    engineId: 'podman1',
+    engineName: 'podman',
+    manifests: [
+      {
+        digest: 'sha256:digest123',
+        mediaType: 'mediaType',
+        platform: {
+          architecture: 'architecture',
+          features: [],
+          os: 'os',
+          variant: 'variant',
+        },
+        size: 100,
+        urls: ['url1', 'url2'],
+      },
+    ],
+    mediaType: 'mediaType',
+    schemaVersion: 1,
+  });
+
+  const imagesList = [
+    manifestImage,
+    regularImage,
+    manifestImageWithIsManifestListFalse,
+    manifestImageWithIsManifestListTrue,
+  ];
   nock('http://localhost').get('/v4.2.0/libpod/images/json').reply(200, imagesList);
   const api = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+  const fakeLibPod = {
+    podmanInspectManifest: inspectManifestMock,
+    podmanListImages: vi.fn().mockResolvedValue(imagesList),
+  } as unknown as LibPod;
 
   // set provider
   containerRegistry.addInternalProvider('podman', {
     name: 'podman',
     id: 'podman1',
     api,
-    libpodApi: api,
+    libpodApi: fakeLibPod,
     connection: {
       type: 'podman',
     },
@@ -4523,21 +4815,39 @@ test('manifest is listed as true with podmanListImages correctly', async () => {
   const images = await containerRegistry.podmanListImages();
   // ensure the field are correct
   expect(images).toBeDefined();
-  expect(images).toHaveLength(2);
+  expect(images).toHaveLength(4);
+
+  // Expect that inspectManifest was called with manifestId
+  expect(inspectManifestMock).toBeCalledWith('manifestImage');
 
   // Check the first image
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
-  expect(image.Id).toBe('manifestImage');
-  expect(image.isManifest).toBe(true);
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
+  expect(image?.Id).toBe('manifestImage');
+  expect(image?.isManifest).toBe(true);
+
+  // Check that the manifest returned sha:256:digest123
+  expect(image?.manifests).toBeDefined();
+  expect(image?.manifests).toHaveLength(1);
+  if (image?.manifests) {
+    expect(image?.manifests[0]?.digest).toBe('sha256:digest123');
+  }
 
   // Check the second image
   const image2 = images[1];
-  expect(image2.engineId).toBe('podman1');
-  expect(image2.engineName).toBe('podman');
-  expect(image2.Id).toBe('ee301c921b8aadc002973b2e0c3da17d701dcd994b606769a7e6eaa100b81d44');
-  expect(image2.isManifest).toBe(false);
+  expect(image2?.engineId).toBe('podman1');
+  expect(image2?.engineName).toBe('podman');
+  expect(image2?.Id).toBe('ee301c921b8aadc002973b2e0c3da17d701dcd994b606769a7e6eaa100b81d44');
+  expect(image2?.isManifest).toBe(false);
+
+  // Check the third image manifest is false due to isManifestList despite all the "guesses" that it should be a manifest
+  const image3 = images[2];
+  expect(image3?.isManifest).toBe(false);
+
+  // Check the fourth image manifest is true due to isManifestList being true
+  const image4 = images[3];
+  expect(image4?.isManifest).toBe(true);
 });
 
 test('if configuration setting is disabled for using libpodApi, it should fall back to compat api', async () => {
@@ -4572,8 +4882,8 @@ test('if configuration setting is disabled for using libpodApi, it should fall b
   expect(images).toBeDefined();
   expect(images).toHaveLength(1);
   const image = images[0];
-  expect(image.engineId).toBe('podman1');
-  expect(image.engineName).toBe('podman');
+  expect(image?.engineId).toBe('podman1');
+  expect(image?.engineName).toBe('podman');
 });
 
 test('check that inspectManifest returns information from libPod.podmanInspectManifest', async () => {
@@ -4641,4 +4951,430 @@ test('inspectManifest should fail if libpod is missing from the provider', async
   await expect(() => containerRegistry.inspectManifest('podman1', 'manifestId')).rejects.toThrowError(
     'LibPod is not supported by this engine',
   );
+});
+
+test('test removeManifest', async () => {
+  const api = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+  const removeManifestMock = vi.fn();
+
+  const fakeLibPod = {
+    podmanRemoveManifest: removeManifestMock,
+  } as unknown as LibPod;
+
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman',
+    id: 'podman1',
+    api,
+    libpodApi: fakeLibPod,
+    connection: {
+      type: 'podman',
+    },
+  } as unknown as InternalContainerProvider);
+
+  const result = await containerRegistry.removeManifest('podman1', 'manifestId');
+  expect(removeManifestMock).toBeCalledWith('manifestId');
+  expect(result).toBeUndefined();
+});
+
+test('saveImage succeeds', async () => {
+  const dockerode = new Dockerode({ protocol: 'http', host: 'localhost' });
+  const stream: Dockerode.Image = {
+    get: vi.fn(),
+  } as unknown as Dockerode.Image;
+  const getImageMock = vi.fn().mockReturnValue(stream);
+  const api = {
+    ...dockerode,
+    getImage: getImageMock,
+  };
+
+  const pipelineMock = vi
+    .spyOn(streamPromises, 'pipeline')
+    .mockImplementation((_source: NodeJS.ReadableStream, _destination: NodeJS.WritableStream) => {
+      return Promise.resolve();
+    });
+
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman-1',
+    id: 'podman1',
+    connection: {
+      type: 'podman',
+    },
+    api,
+  } as unknown as InternalContainerProvider);
+  await containerRegistry.saveImage('podman1', 'an-image', '/path/to/file');
+
+  expect(pipelineMock).toHaveBeenCalledOnce();
+});
+
+test('saveImage succeeds when a passing a cancellable token never canceled', async () => {
+  const cancellationTokenRegistry = new CancellationTokenRegistry();
+  const cancellableTokenId = cancellationTokenRegistry.createCancellationTokenSource();
+  const token = cancellationTokenRegistry.getCancellationTokenSource(cancellableTokenId)!.token;
+  const dockerode = new Dockerode({ protocol: 'http', host: 'localhost' });
+  const stream: Dockerode.Image = {
+    get: vi.fn(),
+  } as unknown as Dockerode.Image;
+  const getImageMock = vi.fn().mockReturnValue(stream);
+  const api = {
+    ...dockerode,
+    getImage: getImageMock,
+  };
+
+  const pipelineMock = vi
+    .spyOn(streamPromises, 'pipeline')
+    .mockImplementation((_source: NodeJS.ReadableStream, _destination: NodeJS.WritableStream) => {
+      return Promise.resolve();
+    });
+
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman-1',
+    id: 'podman1',
+    connection: {
+      type: 'podman',
+    },
+    api,
+  } as unknown as InternalContainerProvider);
+  await containerRegistry.saveImage('podman1', 'an-image', '/path/to/file', token);
+
+  expect(pipelineMock).toHaveBeenCalledOnce();
+});
+
+describe('using fake timers', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('saveImage canceled during image download', async () => {
+    const cancellationTokenRegistry = new CancellationTokenRegistry();
+    const cancellableTokenId = cancellationTokenRegistry.createCancellationTokenSource();
+    const tokenSource = cancellationTokenRegistry.getCancellationTokenSource(cancellableTokenId)!;
+    const token = tokenSource.token;
+    const dockerode = new Dockerode({ protocol: 'http', host: 'localhost' });
+    const imageObjectGetMock = vi.fn().mockImplementation(() => {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve(undefined);
+        }, 1000);
+      });
+    });
+    const stream: Dockerode.Image = {
+      get: imageObjectGetMock,
+    } as unknown as Dockerode.Image;
+    const getImageMock = vi.fn().mockReturnValue(stream);
+    const api = {
+      ...dockerode,
+      getImage: getImageMock,
+    };
+
+    containerRegistry.addInternalProvider('podman1', {
+      name: 'podman-1',
+      id: 'podman1',
+      connection: {
+        type: 'podman',
+      },
+      api,
+    } as unknown as InternalContainerProvider);
+    setTimeout(() => {
+      tokenSource.cancel();
+    }, 500);
+
+    const savePromise = containerRegistry.saveImage('podman1', 'an-image', '/path/to/file', token);
+    vi.advanceTimersByTime(2000);
+
+    await expect(savePromise).rejects.toThrowError('saveImage operation canceled');
+  });
+});
+
+test('saveImage canceled during image saving on filesystem', async () => {
+  const streamModule = await vi.importActual<typeof import('node:stream/promises')>('node:stream/promises');
+  const fsModule = await vi.importActual<typeof import('node:fs')>('node:fs');
+  vi.mocked(streamPromises.pipeline).mockImplementation(streamModule.pipeline);
+  vi.mocked(fs.createWriteStream).mockImplementation(fsModule.createWriteStream);
+  const cancellationTokenRegistry = new CancellationTokenRegistry();
+  const cancellableTokenId = cancellationTokenRegistry.createCancellationTokenSource();
+  const tokenSource = cancellationTokenRegistry.getCancellationTokenSource(cancellableTokenId)!;
+  const token = tokenSource.token;
+  const dockerode = new Dockerode({ protocol: 'http', host: 'localhost' });
+  const imageObjectGetMock = vi.fn().mockResolvedValue(() => {
+    const stream = Readable.from(Buffer.from('a content'));
+    stream.on('readable', () => {
+      setTimeout(() => {
+        // too late
+        stream.read();
+      }, 300);
+    });
+    return stream;
+  });
+  const stream: Dockerode.Image = {
+    get: imageObjectGetMock,
+  } as unknown as Dockerode.Image;
+  const getImageMock = vi.fn().mockReturnValue(stream);
+  const api = {
+    ...dockerode,
+    getImage: getImageMock,
+  };
+
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman-1',
+    id: 'podman1',
+    connection: {
+      type: 'podman',
+    },
+    api,
+  } as unknown as InternalContainerProvider);
+  setTimeout(() => {
+    tokenSource.cancel();
+  }, 50);
+
+  const tmpdir = os.tmpdir();
+  const savePromise = containerRegistry.saveImage('podman1', 'an-image', path.join(tmpdir, 'image-to-save'), token);
+  await expect(savePromise).rejects.toThrowError('The operation was aborted');
+});
+
+describe('provider update', () => {
+  test('stopped update should reset connection API', async () => {
+    const statusMock = vi.fn();
+
+    const internalContainerProvider: InternalContainerProvider = {
+      name: 'podman',
+      id: 'podman1',
+      api: undefined,
+      libpodApi: undefined,
+      connection: {
+        type: 'podman',
+        name: 'podman',
+        displayName: 'podman',
+        endpoint: {
+          socketPath: '/endpoint1.sock',
+        },
+        status: statusMock,
+      },
+    };
+    // set provider
+    containerRegistry.addInternalProvider('podman.podman', internalContainerProvider);
+
+    const containerProviderConnection: podmanDesktopAPI.ContainerProviderConnection = {
+      name: 'podman',
+      type: 'podman',
+      endpoint: {
+        socketPath: '/endpoint1.sock',
+      },
+      status: statusMock,
+    } as unknown as podmanDesktopAPI.ContainerProviderConnection;
+
+    const podmanProvider = {
+      name: 'podman',
+      id: 'podman',
+    } as unknown as podmanDesktopAPI.Provider;
+
+    const onBeforeUpdateListeners: ((event: podmanDesktopAPI.UpdateContainerConnectionEvent) => void)[] = [];
+
+    const providerRegistry: ProviderRegistry = {
+      onBeforeDidUpdateContainerConnection: (
+        listener: (event: podmanDesktopAPI.UpdateContainerConnectionEvent) => void,
+      ) => onBeforeUpdateListeners.push(listener),
+    } as unknown as ProviderRegistry;
+
+    // default to started
+    statusMock.mockReturnValue('started');
+
+    containerRegistry.registerContainerConnection(podmanProvider, containerProviderConnection, providerRegistry);
+
+    // when the provider is started, we should get the provider
+    const internal = containerRegistry.getMatchingPodmanEngine('podman.podman');
+    expect(internal.api).toBeDefined();
+    expect(internal.libpodApi).toBeDefined();
+
+    // mock the status to stopped
+    statusMock.mockReturnValue('stopped');
+    const event: podmanDesktopAPI.UpdateContainerConnectionEvent = {
+      providerId: 'podman',
+      connection: containerProviderConnection,
+      status: 'stopped',
+    };
+
+    // send the stopped event
+    onBeforeUpdateListeners.forEach(listener => listener(event));
+
+    // ensure the provider is not running
+    expect(() => containerRegistry.getMatchingPodmanEngine('podman.podman')).toThrowError(
+      'no running provider for the matching engine',
+    );
+  });
+
+  test('started update should setup connection API ', async () => {
+    vi.useFakeTimers();
+    expect(vi.isFakeTimers()).toBeTruthy();
+
+    const statusMock = vi.fn();
+
+    const internalContainerProvider: InternalContainerProvider = {
+      name: 'podman',
+      id: 'podman1',
+      api: undefined,
+      libpodApi: undefined,
+      connection: {
+        type: 'podman',
+        name: 'podman',
+        displayName: 'podman',
+        endpoint: {
+          socketPath: '/endpoint1.sock',
+        },
+        status: statusMock,
+      },
+    };
+    // set provider
+    containerRegistry.addInternalProvider('podman.podman', internalContainerProvider);
+
+    const containerProviderConnection: podmanDesktopAPI.ContainerProviderConnection = {
+      name: 'podman',
+      type: 'podman',
+      endpoint: {
+        socketPath: '/endpoint1.sock',
+      },
+      status: statusMock,
+    } as unknown as podmanDesktopAPI.ContainerProviderConnection;
+
+    const podmanProvider = {
+      name: 'podman',
+      id: 'podman',
+    } as unknown as podmanDesktopAPI.Provider;
+
+    const providerRegistry: ProviderRegistry = {
+      onBeforeDidUpdateContainerConnection: vi.fn(),
+    } as unknown as ProviderRegistry;
+
+    // default to stopped
+    statusMock.mockReturnValue('stopped');
+
+    containerRegistry.registerContainerConnection(podmanProvider, containerProviderConnection, providerRegistry);
+
+    // ensure the provider is not running
+    expect(() => containerRegistry.getMatchingPodmanEngine('podman.podman')).toThrowError(
+      'no running provider for the matching engine',
+    );
+
+    // mock the new status to started
+    statusMock.mockReturnValue('started');
+
+    vi.advanceTimersByTime(2000);
+
+    // wait for SetInterval to proceed the update
+    await vi.waitFor(() => {
+      // let's get the podman engine, it should be running, and have defined api&libpodApi
+      const internal = containerRegistry.getMatchingPodmanEngine('podman.podman');
+      expect(internal.api).toBeDefined();
+      expect(internal.libpodApi).toBeDefined();
+    });
+  });
+});
+
+describe('extractContainerEnvironment', () => {
+  test('simple env', async () => {
+    // create a fake inspect info object with env
+    const inspectInfo = {
+      Config: {
+        Env: ['TERM=xterm', 'HOME=/root'],
+      },
+    } as unknown as ContainerInspectInfo;
+
+    const env = containerRegistry.extractContainerEnvironment(inspectInfo);
+
+    expect(env).toBeDefined();
+    expect(Object.keys(env)).toHaveLength(2);
+
+    expect(env['TERM']).toBe('xterm');
+    expect(env['HOME']).toBe('/root');
+  });
+
+  test('simple complex env', async () => {
+    // create a fake inspect info object with env
+    const inspectInfo = {
+      Config: {
+        Env: ['HOME=/root', 'SERVER_ARGS=--host-config=host-secondary.xml --foo-=bar'],
+      },
+    } as unknown as ContainerInspectInfo;
+
+    const env = containerRegistry.extractContainerEnvironment(inspectInfo);
+
+    expect(env).toBeDefined();
+    expect(Object.keys(env)).toHaveLength(2);
+
+    expect(env['HOME']).toBe('/root');
+    expect(env['SERVER_ARGS']).toBe('--host-config=host-secondary.xml --foo-=bar');
+  });
+});
+
+test('resolve Podman image shortname to FQN', async () => {
+  const getMatchingContainerProviderMock = vi.spyOn(containerRegistry, 'getMatchingContainerProvider');
+  nock('http://localhost')
+    .get('/v5.0.0/libpod/images/shortname/resolve')
+    .reply(200, { Names: ['someregistry/shortname', 'docker.io/shortname', 'quay.io/shortname'] });
+
+  const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+  const libpod = new LibpodDockerode();
+  libpod.enhancePrototypeWithLibPod();
+
+  const internalContainerProviderMock = {
+    name: 'podman',
+    id: 'podman1',
+    api: dockerAPI,
+    libpodApi: dockerAPI,
+    connection: {
+      type: 'podman',
+    },
+  } as unknown as InternalContainerProvider;
+
+  containerRegistry.addInternalProvider('podman1', internalContainerProviderMock);
+
+  getMatchingContainerProviderMock.mockReturnValue(internalContainerProviderMock);
+
+  let imagesNames = await containerRegistry.resolveShortnameImage(
+    {} as unknown as ProviderContainerConnectionInfo,
+    'shortname',
+  );
+  expect(imagesNames.length).toBe(3);
+  expect(imagesNames[0]).toBe('someregistry/shortname');
+  expect(imagesNames[1]).toBe('docker.io/shortname');
+  expect(imagesNames[2]).toBe('quay.io/shortname');
+
+  nock('http://localhost').get('/v5.0.0/libpod/images/shortname/resolve').reply(200, { Names: [] });
+  imagesNames = await containerRegistry.resolveShortnameImage(
+    {} as unknown as ProviderContainerConnectionInfo,
+    'shortname',
+  );
+  expect(imagesNames.length).toBe(1);
+  expect(imagesNames[0]).toBe('shortname');
+});
+
+test('resolve Dokcer image shortname to FQN', async () => {
+  const getMatchingContainerProviderMock = vi.spyOn(containerRegistry, 'getMatchingContainerProvider');
+  const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+  const libpod = new LibpodDockerode();
+  libpod.enhancePrototypeWithLibPod();
+
+  const internalContainerProviderMock = {
+    name: 'docker1',
+    id: 'docker1',
+    api: dockerAPI,
+    connection: {
+      type: 'docker',
+    },
+  } as unknown as InternalContainerProvider;
+
+  containerRegistry.addInternalProvider('docker1', internalContainerProviderMock);
+
+  getMatchingContainerProviderMock.mockReturnValue(internalContainerProviderMock);
+  const imagesNames = await containerRegistry.resolveShortnameImage(
+    {} as unknown as ProviderContainerConnectionInfo,
+    'shortname',
+  );
+  expect(imagesNames.length).toBe(1);
+  expect(imagesNames[0]).toBe('shortname');
 });

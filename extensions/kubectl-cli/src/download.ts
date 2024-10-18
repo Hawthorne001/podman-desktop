@@ -21,6 +21,7 @@ import { arch, platform } from 'node:os';
 import * as path from 'node:path';
 
 import * as extensionApi from '@podman-desktop/api';
+import { rcompare } from 'semver';
 
 import type { KubectlGithubReleaseArtifactMetadata, KubectlGitHubReleases } from './kubectl-github-releases';
 import type { OS } from './os';
@@ -37,19 +38,24 @@ export class KubectlDownload {
   // and return the artifact metadata
   async getLatestVersionAsset(): Promise<KubectlGithubReleaseArtifactMetadata> {
     const latestReleases = await this.kubectlGitHubReleases.grabLatestsReleasesMetadata();
+    // from biggest to smallest
+    latestReleases.sort((a, b) => rcompare(a.tag, b.tag));
     return latestReleases[0];
   }
 
   // Create a "quickpick" prompt to ask the user which version of kubectl they want to download
-  async promptUserForVersion(): Promise<KubectlGithubReleaseArtifactMetadata> {
+  async promptUserForVersion(currentKubectlTag?: string): Promise<KubectlGithubReleaseArtifactMetadata> {
     // Get the latest releases
-    const lastReleasesMetadata = await this.kubectlGitHubReleases.grabLatestsReleasesMetadata();
-
+    let lastReleasesMetadata = await this.kubectlGitHubReleases.grabLatestsReleasesMetadata();
+    lastReleasesMetadata.sort((a, b) => rcompare(a.tag, b.tag));
+    // if the user already has an installed version, we remove it from the list
+    if (currentKubectlTag) {
+      lastReleasesMetadata = lastReleasesMetadata.filter(release => release.tag.slice(1) !== currentKubectlTag);
+    }
     // Show the quickpick
     const selectedRelease = await extensionApi.window.showQuickPick(lastReleasesMetadata, {
       placeHolder: 'Select kubectl version to download',
     });
-
     if (selectedRelease) {
       return selectedRelease;
     } else {

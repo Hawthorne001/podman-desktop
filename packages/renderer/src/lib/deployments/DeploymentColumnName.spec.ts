@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,8 +40,7 @@ test('Expect simple column styling', async () => {
 
   const text = screen.getByText(deployment.name);
   expect(text).toBeInTheDocument();
-  expect(text).toHaveClass('text-sm');
-  expect(text).toHaveClass('text-gray-300');
+  expect(text).toHaveClass('text-[var(--pd-table-body-text-highlight)]');
 });
 
 test('Expect clicking works', async () => {
@@ -55,5 +54,12 @@ test('Expect clicking works', async () => {
 
   fireEvent.click(text);
 
-  expect(routerGotoSpy).toBeCalledWith('/deployments/my-deployment/default/summary');
+  expect(routerGotoSpy).toBeCalledWith('/kubernetes/deployments/my-deployment/default/summary');
+});
+
+test('Expect to show namespace in column', async () => {
+  render(DeploymentColumnName, { object: deployment });
+
+  const text = screen.getByText(deployment.namespace);
+  expect(text).toBeInTheDocument();
 });

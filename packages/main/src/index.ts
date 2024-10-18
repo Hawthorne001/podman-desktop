@@ -21,14 +21,20 @@ import './security-restrictions';
 import dns from 'node:dns';
 
 import type { BrowserWindow } from 'electron';
-import { app, ipcMain, Tray } from 'electron';
+import { app, ipcMain, Menu, Tray } from 'electron';
 
 import { createNewWindow, restoreWindow } from '/@/mainWindow.js';
 
+import { ApplicationMenuBuilder } from './application-menu-builder.js';
+import type { ConfigurationRegistry } from './plugin/configuration-registry.js';
+import type { Event } from './plugin/events/emitter.js';
+import { Emitter } from './plugin/events/emitter.js';
 import type { ExtensionLoader } from './plugin/extension-loader.js';
 import { PluginSystem } from './plugin/index.js';
 import { Deferred } from './plugin/util/deferred.js';
+import { ZoomLevelHandler } from './plugin/zoom-level-handler.js';
 import { StartupInstall } from './system/startup-install.js';
+import { WindowHandler } from './system/window/window-handler.js';
 import { AnimatedTray } from './tray-animate-icon.js';
 import { TrayMenu } from './tray-menu.js';
 import { isMac, isWindows, stoppedExtensions } from './util.js';
@@ -193,12 +199,20 @@ app.whenReady().then(
     // Required for macOS to start the app correctly (this is will be shown in the dock)
     // We use 'activate' within whenReady in order to gracefully start on macOS, see this link:
     // https://www.electronjs.org/docs/latest/tutorial/quick-start#open-a-window-if-none-are-open-macos
-    app.on('activate', () => {
+    app.on('activate', (_event, hasVisibleWindows) => {
       createNewWindow()
         .then(w => mainWindowDeferred.resolve(w))
         .catch((error: unknown) => {
           console.log('Error creating window', error);
         });
+
+      // try to restore the window if it's not visible
+      // for example user click on the dock icon
+      if (isMac() && !hasVisibleWindows) {
+        restoreWindow().catch((error: unknown) => {
+          console.error('Error restoring window', error);
+        });
+      }
     });
 
     // prefer ipv4 over ipv6
@@ -212,28 +226,58 @@ app.whenReady().then(
     animatedTray.setTray(tray);
     const trayMenu = new TrayMenu(tray, animatedTray);
 
+    const _onDidCreatedConfigurationRegistry = new Emitter<ConfigurationRegistry>();
+    const onDidCreatedConfigurationRegistry: Event<ConfigurationRegistry> = _onDidCreatedConfigurationRegistry.event;
+
     // Start extensions
     const pluginSystem = new PluginSystem(trayMenu, mainWindowDeferred);
-    extensionLoader = await pluginSystem.initExtensions();
 
-    // Get the configuration registry (saves all our settings)
-    const configurationRegistry = extensionLoader.getConfigurationRegistry();
-
-    // If we've manually set the tray icon color, update the tray icon. This can only be done
-    // after configurationRegistry is loaded. Windows or Linux support only for icon color change.
-    if (!isMac()) {
-      const color = configurationRegistry.getConfiguration('preferences').get('TrayIconColor');
-      if (typeof color === 'string') {
-        animatedTray.setColor(color);
+    onDidCreatedConfigurationRegistry(async (configurationRegistry: ConfigurationRegistry) => {
+      // If we've manually set the tray icon color, update the tray icon. This can only be done
+      // after configurationRegistry is loaded. Windows or Linux support only for icon color change.
+      if (!isMac()) {
+        const color = configurationRegistry.getConfiguration('preferences').get('TrayIconColor');
+        if (typeof color === 'string') {
+          animatedTray.setColor(color);
+        }
       }
-    }
 
-    // Share configuration registry with renderer process
-    ipcMain.emit('configuration-registry', '', configurationRegistry);
+      // Share configuration registry with renderer process
+      ipcMain.emit('configuration-registry', '', configurationRegistry);
 
-    // Configure automatic startup
-    const automaticStartup = new StartupInstall(configurationRegistry);
-    await automaticStartup.configure();
+      // Register the window configuration
+      // This is used to save/restore the window size and position
+      mainWindowDeferred.promise
+        .then(browserWindow => {
+          const windowHandler = new WindowHandler(configurationRegistry, browserWindow);
+          windowHandler.init();
+
+          // Configure the zoom level handler
+          // handle zoom level
+          const zoomLevelHandler = new ZoomLevelHandler(browserWindow, configurationRegistry);
+          zoomLevelHandler.init();
+
+          // sets the menu
+          const applicationMenuBuilder = new ApplicationMenuBuilder(zoomLevelHandler);
+          const menu = applicationMenuBuilder.build();
+
+          if (menu) {
+            Menu.setApplicationMenu(menu);
+          }
+
+          // send window Handler
+          ipcMain.emit('window-handler', '', windowHandler);
+        })
+        .catch((error: unknown) => {
+          console.error('Error initializing window handler', error);
+        });
+
+      // Configure automatic startup
+      const automaticStartup = new StartupInstall(configurationRegistry);
+      await automaticStartup.configure();
+    });
+
+    extensionLoader = await pluginSystem.initExtensions(_onDidCreatedConfigurationRegistry);
   },
   (e: unknown) => console.error('Failed to start app:', e),
 );

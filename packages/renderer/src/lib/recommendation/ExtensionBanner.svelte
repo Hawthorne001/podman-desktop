@@ -1,20 +1,23 @@
 <script lang="ts">
-import { onMount } from 'svelte';
-
 import FeaturedExtension from '/@/lib/featured/FeaturedExtension.svelte';
 
 import type { ExtensionBanner } from '../../../../main/src/plugin/recommendations/recommendations-api';
 
-export let banner: ExtensionBanner;
+// Pass in the theme appearance colour of PD to the banner, we do it here so we don't have to do multiple isDark checks when rendering multiple banners.
+let { banner, isDark }: { banner: ExtensionBanner; isDark: boolean } = $props();
 
-let style: string | undefined = undefined;
-let hasBackground: boolean = !!banner.background && (!!banner.background.image || !!banner.background.gradient);
+let style = $state<string | undefined>(undefined);
+let hasBackground = $state(
+  !!banner.background && ((!!banner.background.dark && !!banner.background.light) || !!banner.background.gradient),
+);
 
-onMount(() => {
+$effect(() => {
   if (banner.background?.gradient) {
     style = `background: linear-gradient(${banner.background.gradient.start}, ${banner.background.gradient.end});`;
-  } else if (banner.background?.image) {
-    style = `background-image: url("${banner.background.image}");`;
+  } else if (isDark && banner.background?.dark) {
+    style = `background-image: url("${banner.background.dark}");`;
+  } else if (!isDark && banner.background?.light) {
+    style = `background-image: url("${banner.background.light}");`;
   } else {
     style = undefined;
   }
@@ -22,13 +25,13 @@ onMount(() => {
 </script>
 
 <div
-  style="{style}"
+  style={style}
   aria-label="Recommended extension"
-  class:bg-charcoal-800="{!hasBackground}"
+  class:bg-charcoal-800={!hasBackground}
   class="bg-charcoal-800 bg-cover max-h-[180px] px-5 py-5 rounded-lg grid grid-cols-[20px_8fr_7fr] gap-4 overflow-hidden">
   <!-- icon column -->
   <div>
-    <img class="w-4 h-4' object-contain mt-1" alt="banner icon" src="{banner.icon}" />
+    <img class="w-4 h-4' object-contain mt-1" alt="banner icon" src={banner.icon} />
   </div>
 
   <!-- content column -->
@@ -37,13 +40,13 @@ onMount(() => {
 
     <div class="grid grid-cols-[2fr_1fr]">
       <span class="text-base">{banner.description}</span>
-      <img class="min-w-24 max-w-32 min-h-24 max-h-32 object-contain" alt="banner thumbnail" src="{banner.thumbnail}" />
+      <img class="min-w-24 max-w-32 min-h-24 max-h-32 object-contain" alt="banner thumbnail" src={banner.thumbnail} />
     </div>
   </div>
 
   <!-- feature extension actions -->
   <div class="flex flex-col">
-    <FeaturedExtension displayTitle="{true}" variant="secondary" featuredExtension="{banner.featured}" />
+    <FeaturedExtension displayTitle={true} variant="secondary" featuredExtension={banner.featured} />
     <span class="text-base w-full text-end">{banner.featured.description}</span>
   </div>
 </div>

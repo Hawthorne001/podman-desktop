@@ -25,21 +25,40 @@ import type { ContainerInfoUI } from '../container/ContainerInfoUI';
 import ComposeActions from './ComposeActions.svelte';
 import type { ComposeInfoUI } from './ComposeInfoUI';
 
-const compose: ComposeInfoUI = {
-  engineId: 'podman',
-  engineType: 'podman',
-  name: 'my-compose-group',
-  status: 'STOPPED',
-  actionInProgress: false,
-  actionError: undefined,
-  containers: [
+class ComposeInfoUIImpl implements ComposeInfoUI {
+  #status: string = 'STOPPED';
+  constructor(
+    public engineId: string,
+    public engineType: 'docker' | 'podman',
+    public name: string,
+    initialStatus: string,
+    public actionInProgress: boolean,
+    public actionError: string | undefined,
+    public containers: ContainerInfoUI[],
+  ) {}
+  set status(status: string) {
+    this.#status = status;
+  }
+  get status(): string {
+    return this.#status;
+  }
+}
+
+const compose: ComposeInfoUI = new ComposeInfoUIImpl(
+  'podman',
+  'podman',
+  'my-compose-group',
+  'STOPPED',
+  false,
+  undefined,
+  [
     {
       actionInProgress: false,
       actionError: undefined,
       state: 'STOPPED',
     } as ContainerInfoUI,
   ],
-} as ComposeInfoUI;
+);
 
 const getContributedMenusMock = vi.fn();
 const updateMock = vi.fn();
@@ -62,8 +81,7 @@ afterEach(() => {
 });
 
 test('Expect no error and status starting compose', async () => {
-  const { component } = render(ComposeActions, { compose });
-  component.$on('update', updateMock);
+  render(ComposeActions, { compose, onUpdate: updateMock });
 
   // click on start button
   const startButton = screen.getByRole('button', { name: 'Start Compose' });
@@ -77,8 +95,7 @@ test('Expect no error and status starting compose', async () => {
 });
 
 test('Expect no error and status stopping compose', async () => {
-  const { component } = render(ComposeActions, { compose });
-  component.$on('update', updateMock);
+  render(ComposeActions, { compose, onUpdate: updateMock });
 
   // click on stop button
   const stopButton = screen.getByRole('button', { name: 'Stop Compose' });
@@ -92,8 +109,7 @@ test('Expect no error and status stopping compose', async () => {
 });
 
 test('Expect no error and status restarting compose', async () => {
-  const { component } = render(ComposeActions, { compose });
-  component.$on('update', updateMock);
+  render(ComposeActions, { compose, onUpdate: updateMock });
 
   // click on restart button
   const restartButton = screen.getByRole('button', { name: 'Restart Compose' });
@@ -109,8 +125,7 @@ test('Expect no error and status restarting compose', async () => {
 test('Expect no error and status deleting compose', async () => {
   // Mock the showMessageBox to return 0 (yes)
   showMessageBoxMock.mockResolvedValue({ response: 0 });
-  const { component } = render(ComposeActions, { compose });
-  component.$on('update', updateMock);
+  render(ComposeActions, { compose, onUpdate: updateMock });
 
   // click on delete button
   const deleteButton = screen.getByRole('button', { name: 'Delete Compose' });

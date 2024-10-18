@@ -37,7 +37,7 @@ const eventEmitter = {
   },
 };
 
-const getCatalogExtensionsMock: Mock<any, Promise<CatalogExtension[]>> = vi.fn();
+const getCatalogExtensionsMock: Mock<() => Promise<CatalogExtension[]>> = vi.fn();
 
 Object.defineProperty(global, 'window', {
   value: {
@@ -74,6 +74,7 @@ test('catalog extension should be updated in case of a container is removed', as
       publisherDisplayName: 'Foo publisher display name',
       unlisted: false,
       categories: [],
+      keywords: [],
       versions: [
         {
           version: '1.0.0',
@@ -92,6 +93,7 @@ test('catalog extension should be updated in case of a container is removed', as
       shortDescription: 'short description',
       publisherDisplayName: 'Foo publisher display name',
       categories: [],
+      keywords: [],
       unlisted: true,
       versions: [
         {
@@ -129,4 +131,18 @@ test('catalog extension should be updated in case of a container is removed', as
   const secondExtension = afterCatalogExtensions.find(ext => ext.id === 'second.extension2');
   expect(secondExtension).toBeDefined();
   expect(secondExtension?.unlisted).toBeTruthy();
+});
+
+test('catalog extension should be updated in refresh event is published', async () => {
+  // initial catalog is empty
+  getCatalogExtensionsMock.mockResolvedValue([]);
+  getCatalogExtensionsMock.mockReset();
+
+  const callback = callbacks.get('refresh-catalog');
+  // send 'refresh-catalog' event
+  expect(callback).toBeDefined();
+  await callback();
+
+  // check that getCatalogExtensionsMock is called
+  expect(getCatalogExtensionsMock).toBeCalled();
 });

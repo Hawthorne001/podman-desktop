@@ -22,6 +22,7 @@ import '@testing-library/jest-dom/vitest';
 
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { tick } from 'svelte';
 import { router } from 'tinro';
 import { afterEach, beforeAll, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
@@ -63,11 +64,8 @@ afterEach(() => {
 
 async function waitRender() {
   const result = render(RunImage);
-
-  //wait until dataReady is true
-  while (result.component.$$.ctx[30] !== true) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  await tick();
+  await tick();
   return result;
 }
 
@@ -88,6 +86,7 @@ async function createRunImage(entrypoint?: string | string[], cmd?: string[]) {
     tag: '',
     icon: ImageIcon,
     badges: [],
+    digest: 'sha256:1234567890',
   });
   const imageInfo: ImageInspectInfo = {
     Architecture: '',
@@ -98,7 +97,7 @@ async function createRunImage(entrypoint?: string | string[], cmd?: string[]) {
       AttachStderr: false,
       AttachStdin: false,
       AttachStdout: false,
-      Cmd: cmd || [],
+      Cmd: cmd ?? [],
       Domainname: '',
       Entrypoint: entrypoint,
       Env: [],
@@ -162,7 +161,7 @@ describe('RunImage', () => {
 
     await fireEvent.click(link);
 
-    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint:' });
+    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint' });
     expect(entryPoint).toBeInTheDocument();
     expect((entryPoint as HTMLInputElement).value).toBe('entrypoint');
   });
@@ -174,7 +173,7 @@ describe('RunImage', () => {
 
     await fireEvent.click(link);
 
-    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint:' });
+    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint' });
     expect(entryPoint).toBeInTheDocument();
     expect((entryPoint as HTMLInputElement).value).toBe('entrypoint');
   });
@@ -186,7 +185,7 @@ describe('RunImage', () => {
 
     await fireEvent.click(link);
 
-    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint:' });
+    const entryPoint = screen.getByRole('textbox', { name: 'Entrypoint' });
     expect(entryPoint).toBeInTheDocument();
     expect((entryPoint as HTMLInputElement).value).toBe('entrypoint1 entrypoint2');
   });
@@ -198,7 +197,7 @@ describe('RunImage', () => {
 
     await fireEvent.click(link);
 
-    const command = screen.getByRole('textbox', { name: 'Command:' });
+    const command = screen.getByRole('textbox', { name: 'Command' });
     expect(command).toBeInTheDocument();
     expect((command as HTMLInputElement).value).toBe('command');
   });
@@ -210,7 +209,7 @@ describe('RunImage', () => {
 
     await fireEvent.click(link);
 
-    const entryPoint = screen.getByRole('textbox', { name: 'Command:' });
+    const entryPoint = screen.getByRole('textbox', { name: 'Command' });
     expect(entryPoint).toBeInTheDocument();
     expect((entryPoint as HTMLInputElement).value).toBe('command1 command2');
   });
@@ -268,7 +267,7 @@ describe('RunImage', () => {
   });
 
   test('Expect that image without cmd is sent to API', async () => {
-    await createRunImage(['entrypoint1', 'entrypoint2'], undefined);
+    await createRunImage(['entrypoint1', 'entrypoint2']);
 
     const button = screen.getByRole('button', { name: 'Start Container' });
 
@@ -496,5 +495,65 @@ describe('RunImage', () => {
 
     const button = screen.getByRole('button', { name: 'Start Container' });
     expect((button as HTMLButtonElement).disabled).toBeTruthy();
+  });
+
+  test('Expect able to play with devices', async () => {
+    await createRunImage('', []);
+
+    const link1 = screen.getByRole('link', { name: 'Advanced' });
+    await fireEvent.click(link1);
+
+    // set the input field for the path
+    const deviceHostInput = screen.getByRole('textbox', { name: 'device.host.0' });
+
+    // set the value
+    await userEvent.type(deviceHostInput, '/dev/tty0');
+
+    // add a new element
+    const addDeviceButton = screen.getByRole('button', { name: 'Add device after index 0' });
+    await fireEvent.click(addDeviceButton);
+
+    // again (should be 3 now)
+    await fireEvent.click(addDeviceButton);
+
+    // now set the input for fields 2 and 3
+    const deviceHostInput2 = screen.getByRole('textbox', { name: 'device.host.1' });
+    await userEvent.type(deviceHostInput2, '/dev/tty1');
+
+    const deviceHostInput3 = screen.getByRole('textbox', { name: 'device.host.2' });
+    await userEvent.type(deviceHostInput3, '/dev/tty2');
+    const deviceContainerInput3 = screen.getByRole('textbox', { name: 'device.container.2' });
+    await userEvent.type(deviceContainerInput3, '/dev/ttyOnContainer2');
+
+    // delete the entry 2
+    const deleteDeviceButton = screen.getByRole('button', { name: 'Delete device at index 1' });
+    await fireEvent.click(deleteDeviceButton);
+
+    // now click on start
+
+    const button = screen.getByRole('button', { name: 'Start Container' });
+
+    await fireEvent.click(button);
+
+    // should have item 1 and item 3 as we deleted item 2
+    expect(window.createAndStartContainer).toHaveBeenCalledWith(
+      'engineid',
+      expect.objectContaining({
+        HostConfig: expect.objectContaining({
+          Devices: [
+            {
+              CgroupPermissions: 'rwm',
+              PathOnHost: '/dev/tty0',
+              PathInContainer: '/dev/tty0',
+            },
+            {
+              CgroupPermissions: 'rwm',
+              PathOnHost: '/dev/tty2',
+              PathInContainer: '/dev/ttyOnContainer2',
+            },
+          ],
+        }),
+      }),
+    );
   });
 });

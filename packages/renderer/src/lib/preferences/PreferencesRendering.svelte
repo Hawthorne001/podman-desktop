@@ -31,8 +31,8 @@ $: matchingRecords = properties
     property =>
       !searchValue ||
       matchValue(property.title, searchValue) ||
-      (property.description && matchValue(property.description, searchValue)) ||
-      (property.markdownDescription && matchValue(property.markdownDescription, searchValue)),
+      (!!property.description && matchValue(property.description, searchValue)) ||
+      (!!property.markdownDescription && matchValue(property.markdownDescription, searchValue)),
   )
   .reduce((map, property) => {
     if (!map.has(property.parentId)) {
@@ -66,10 +66,10 @@ function updateSearchValue(event: any) {
 }
 </script>
 
-<Route path="/" breadcrumb="{key}">
+<Route path="/" breadcrumb={key}>
   <SettingsPage title="Preferences">
-    <SearchInput slot="header" title="preferences" class="mt-4" on:input="{e => updateSearchValue(e)}" />
-    <div class="flex flex-col space-y-5">
+    <SearchInput slot="header" title="preferences" class="mt-4" on:input={e => updateSearchValue(e)} />
+    <div class="flex flex-col space-y-5 text-[var(--pd-content-header)]">
       {#if matchingRecords.size === 0}
         <div>No Settings Found</div>
       {:else}
@@ -77,10 +77,10 @@ function updateSearchValue(event: any) {
           {@const records = matchingRecords.get(configSection)}
           {#if records}
             <div>
-              <div class="first-letter:uppercase">{records.at(0)?.title}</div>
+              <div class="text-lg font-medium first-letter:uppercase">{records.at(0)?.title}</div>
               {#each records as configItem}
                 <div class="bg-[var(--pd-invert-content-card-bg)] rounded-md mt-2 ml-2">
-                  <PreferencesRenderingItem record="{configItem}" />
+                  <PreferencesRenderingItem record={configItem} />
                 </div>
               {/each}
             </div>

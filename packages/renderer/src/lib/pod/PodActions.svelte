@@ -13,6 +13,7 @@ import { createEventDispatcher, onMount } from 'svelte';
 import { router } from 'tinro';
 
 import ContributionActions from '/@/lib/actions/ContributionActions.svelte';
+import { withConfirmation } from '/@/lib/dialogs/messagebox-utils';
 
 import type { Menu } from '../../../../main/src/plugin/menu-registry';
 import { MenuContext } from '../../../../main/src/plugin/menu-registry';
@@ -26,6 +27,9 @@ export let dropdownMenu = false;
 export let detailed = false;
 
 const dispatch = createEventDispatcher<{ update: PodInfoUI }>();
+export let onUpdate: (update: PodInfoUI) => void = update => {
+  dispatch('update', update);
+};
 
 let contributions: Menu[] = [];
 onMount(async () => {
@@ -83,13 +87,13 @@ function inProgress(inProgress: boolean, state?: string): void {
     pod.status = state;
   }
 
-  dispatch('update', pod);
+  onUpdate(pod);
 }
 
 function handleError(errorMessage: string): void {
   pod.actionError = errorMessage;
   pod.status = 'ERROR';
-  dispatch('update', pod);
+  onUpdate(pod);
 }
 
 async function startPod() {
@@ -106,7 +110,11 @@ async function startPod() {
 async function restartPod() {
   inProgress(false, 'RESTARTING');
   try {
-    await window.restartPod(pod.engineId, pod.id);
+    if (pod.kind === 'podman') {
+      await window.restartPod(pod.engineId, pod.id);
+    } else {
+      await window.restartKubernetesPod(pod.name);
+    }
   } catch (error) {
     handleError(String(error));
   } finally {
@@ -160,125 +168,124 @@ if (dropdownMenu) {
 {#if pod.kind === 'podman'}
   <ListItemButtonIcon
     title="Start Pod"
-    onClick="{() => startPod()}"
-    hidden="{pod.status === 'RUNNING' || pod.status === 'STOPPING'}"
-    detailed="{detailed}"
-    inProgress="{pod.actionInProgress && pod.status === 'STARTING'}"
-    icon="{faPlay}"
+    onClick={() => startPod()}
+    hidden={pod.status === 'RUNNING' || pod.status === 'STOPPING'}
+    detailed={detailed}
+    inProgress={pod.actionInProgress && pod.status === 'STARTING'}
+    icon={faPlay}
     iconOffset="pl-[0.15rem]" />
   <ListItemButtonIcon
     title="Stop Pod"
-    onClick="{() => stopPod()}"
-    hidden="{!(pod.status === 'RUNNING' || pod.status === 'STOPPING')}"
-    detailed="{detailed}"
-    inProgress="{pod.actionInProgress && pod.status === 'STOPPING'}"
-    icon="{faStop}" />
+    onClick={() => stopPod()}
+    hidden={!(pod.status === 'RUNNING' || pod.status === 'STOPPING')}
+    detailed={detailed}
+    inProgress={pod.actionInProgress && pod.status === 'STOPPING'}
+    icon={faStop} />
 {/if}
 <ListItemButtonIcon
   title="Delete Pod"
-  onClick="{() => deletePod()}"
-  confirm="{true}"
-  icon="{faTrash}"
-  detailed="{detailed}"
-  inProgress="{pod.actionInProgress && pod.status === 'DELETING'}" />
+  onClick={() => withConfirmation(deletePod, `delete pod ${pod.name}`)}
+  icon={faTrash}
+  detailed={detailed}
+  inProgress={pod.actionInProgress && pod.status === 'DELETING'} />
 
 <!-- If dropdownMenu is true, use it, otherwise just show the regular buttons -->
-<svelte:component this="{actionsStyle}">
+<svelte:component this={actionsStyle}>
   {#if pod.kind === 'podman'}
     {#if !detailed}
       <ListItemButtonIcon
         title="Generate Kube"
-        onClick="{() => openGenerateKube()}"
-        menu="{dropdownMenu}"
-        detailed="{detailed}"
-        icon="{faFileCode}" />
+        onClick={() => openGenerateKube()}
+        menu={dropdownMenu}
+        detailed={detailed}
+        icon={faFileCode} />
     {/if}
     <ListItemButtonIcon
       title="Deploy to Kubernetes"
-      onClick="{() => deployToKubernetes()}"
-      menu="{dropdownMenu}"
-      detailed="{detailed}"
-      icon="{faRocket}" />
+      onClick={() => deployToKubernetes()}
+      menu={dropdownMenu}
+      detailed={detailed}
+      icon={faRocket} />
     {#if openingUrls.length === 0}
       <ListItemButtonIcon
         title="Open Exposed Port"
-        menu="{dropdownMenu}"
-        enabled="{false}"
-        hidden="{dropdownMenu}"
-        detailed="{detailed}"
-        icon="{faExternalLinkSquareAlt}" />
+        menu={dropdownMenu}
+        enabled={false}
+        hidden={dropdownMenu}
+        detailed={detailed}
+        icon={faExternalLinkSquareAlt} />
     {:else if openingUrls.length === 1}
       <ListItemButtonIcon
         title="Open {extractPort(openingUrls[0])}"
-        onClick="{() => window.openExternal(openingUrls[0])}"
-        menu="{dropdownMenu}"
-        enabled="{pod.status === 'RUNNING'}"
-        hidden="{dropdownMenu}"
-        detailed="{detailed}"
-        icon="{faExternalLinkSquareAlt}" />
+        onClick={() => window.openExternal(openingUrls[0])}
+        menu={dropdownMenu}
+        enabled={pod.status === 'RUNNING'}
+        hidden={dropdownMenu}
+        detailed={detailed}
+        icon={faExternalLinkSquareAlt} />
     {:else if openingUrls.length > 1}
-      <DropdownMenu icon="{faExternalLinkSquareAlt}" hidden="{dropdownMenu}" shownAsMenuActionItem="{true}">
+      <DropdownMenu icon={faExternalLinkSquareAlt} hidden={dropdownMenu} shownAsMenuActionItem={true}>
         {#each openingUrls as url}
           <ListItemButtonIcon
             title="Open {extractPort(url)}"
-            onClick="{() => window.openExternal(url)}"
-            menu="{!dropdownMenu}"
-            enabled="{pod.status === 'RUNNING'}"
-            hidden="{dropdownMenu}"
-            detailed="{detailed}"
-            icon="{faExternalLinkSquareAlt}" />
+            onClick={() => window.openExternal(url)}
+            menu={!dropdownMenu}
+            enabled={pod.status === 'RUNNING'}
+            hidden={dropdownMenu}
+            detailed={detailed}
+            icon={faExternalLinkSquareAlt} />
         {/each}
       </DropdownMenu>
     {/if}
-    <ListItemButtonIcon
-      title="Restart Pod"
-      onClick="{() => restartPod()}"
-      menu="{dropdownMenu}"
-      detailed="{detailed}"
-      icon="{faArrowsRotate}" />
   {/if}
+  <ListItemButtonIcon
+    title="Restart Pod"
+    onClick={() => restartPod()}
+    menu={dropdownMenu}
+    detailed={detailed}
+    icon={faArrowsRotate} />
   {#if pod.kind === 'kubernetes'}
     {#if openingKubernetesUrls.size === 0}
       <ListItemButtonIcon
         title="Open Browser"
-        menu="{dropdownMenu}"
-        enabled="{false}"
-        hidden="{dropdownMenu}"
-        detailed="{detailed}"
-        icon="{faExternalLinkSquareAlt}" />
+        menu={dropdownMenu}
+        enabled={false}
+        hidden={dropdownMenu}
+        detailed={detailed}
+        icon={faExternalLinkSquareAlt} />
     {:else if openingKubernetesUrls.size === 1}
       <ListItemButtonIcon
         title="Open {[...openingKubernetesUrls][0][0]}"
-        onClick="{() => window.openExternal([...openingKubernetesUrls][0][1])}"
-        menu="{dropdownMenu}"
-        enabled="{pod.status === 'RUNNING'}"
-        hidden="{dropdownMenu}"
-        detailed="{detailed}"
-        icon="{faExternalLinkSquareAlt}" />
+        onClick={() => window.openExternal([...openingKubernetesUrls][0][1])}
+        menu={dropdownMenu}
+        enabled={pod.status === 'RUNNING'}
+        hidden={dropdownMenu}
+        detailed={detailed}
+        icon={faExternalLinkSquareAlt} />
     {:else if openingKubernetesUrls.size > 1}
       <DropdownMenu
         title="Open Kubernetes Routes"
-        icon="{faExternalLinkSquareAlt}"
-        hidden="{dropdownMenu}"
-        shownAsMenuActionItem="{true}">
+        icon={faExternalLinkSquareAlt}
+        hidden={dropdownMenu}
+        shownAsMenuActionItem={true}>
         {#each Array.from(openingKubernetesUrls) as [routeName, routeHost]}
           <ListItemButtonIcon
             title="Open {routeName}"
-            onClick="{() => window.openExternal(routeHost)}"
-            menu="{!dropdownMenu}"
-            enabled="{pod.status === 'RUNNING'}"
-            hidden="{dropdownMenu}"
-            detailed="{detailed}"
-            icon="{faExternalLinkSquareAlt}" />
+            onClick={() => window.openExternal(routeHost)}
+            menu={!dropdownMenu}
+            enabled={pod.status === 'RUNNING'}
+            hidden={dropdownMenu}
+            detailed={detailed}
+            icon={faExternalLinkSquareAlt} />
         {/each}
       </DropdownMenu>
     {/if}
   {/if}
   <ContributionActions
-    args="{[pod]}"
+    args={[pod]}
     contextPrefix="podItem"
-    dropdownMenu="{dropdownMenu}"
-    contributions="{contributions}"
-    detailed="{detailed}"
-    onError="{handleError}" />
+    dropdownMenu={dropdownMenu}
+    contributions={contributions}
+    detailed={detailed}
+    onError={handleError} />
 </svelte:component>

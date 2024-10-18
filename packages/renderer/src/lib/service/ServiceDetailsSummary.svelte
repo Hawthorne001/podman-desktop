@@ -2,6 +2,8 @@
 import type { V1Service } from '@kubernetes/client-node';
 import { ErrorMessage } from '@podman-desktop/ui-svelte';
 
+import Table from '/@/lib/details/DetailsTable.svelte';
+
 import KubeObjectMetaArtifact from '../kube/details/KubeObjectMetaArtifact.svelte';
 import KubeServiceArtifact from '../kube/details/KubeServiceArtifact.svelte';
 import KubeServiceStatusArtifact from '../kube/details/KubeServiceStatusArtifact.svelte';
@@ -13,19 +15,15 @@ export let kubeError: string | undefined = undefined;
 <!-- Show the kube error if we're unable to retrieve the data correctly, but we still want to show the
 basic information -->
 {#if kubeError}
-  <ErrorMessage error="{kubeError}" />
+  <ErrorMessage error={kubeError} />
 {/if}
 
-<div class="flex px-5 py-4 flex-col items-start h-full overflow-auto">
+<Table>
   {#if service}
-    <table class="w-full">
-      <tbody>
-        <KubeObjectMetaArtifact artifact="{service.metadata}" />
-        <KubeServiceStatusArtifact artifact="{service.status}" />
-        <KubeServiceArtifact artifact="{service.spec}" />
-      </tbody>
-    </table>
+    <KubeObjectMetaArtifact artifact={service.metadata} />
+    <KubeServiceStatusArtifact artifact={service.status} />
+    <KubeServiceArtifact artifact={service.spec} />
   {:else}
     <p class="text-purple-500 font-medium">Loading ...</p>
   {/if}
-</div>
+</Table>

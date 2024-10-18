@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,13 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { Octokit } from '@octokit/rest';
 import * as extensionApi from '@podman-desktop/api';
 
-import { installBinaryToSystem } from './cli-run';
+import { getSystemBinaryPath, installBinaryToSystem } from './cli-run';
 import type { ComposeGithubReleaseArtifactMetadata } from './compose-github-releases';
 import { ComposeGitHubReleases } from './compose-github-releases';
 import { Detect } from './detect';
@@ -32,6 +33,7 @@ import { OS } from './os';
 let composeVersionMetadata: ComposeGithubReleaseArtifactMetadata | undefined;
 let composeCliTool: extensionApi.CliTool | undefined;
 let composeCliToolUpdaterDisposable: extensionApi.Disposable | undefined;
+let composeCliToolInstallerDisposable: extensionApi.Disposable | undefined;
 const os = new OS();
 
 // Telemetry
@@ -121,6 +123,11 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
         // We are all done, so we can set the context value to false / downloaded to true
         extensionApi.context.setValue('composeIsNotDownloaded', false, 'onboarding');
         downloaded = true;
+
+        // register the cli tool if necessary
+        if (!composeCliTool) {
+          await registerCLITool(composeDownload, detect);
+        }
       } finally {
         // Make sure we log the telemetry even if we encounter an error
         // If we have downloaded the binary, we can log it as being succcessfully downloaded
@@ -173,14 +180,13 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
         if (!versionInstalled) {
           return;
         }
+        // update the version and the path
         composeCliTool?.updateVersion({
           version: versionInstalled,
+          path: getSystemBinaryPath(composeCliName),
+          installationSource: 'extension',
         });
         // if installed version is the newest, dispose the updater
-        const lastReleaseMetadata = await composeDownload.getLatestVersionAsset();
-        if (lastReleaseMetadata.tag.replace('v', '').trim() === versionInstalled) {
-          composeCliToolUpdaterDisposable?.dispose();
-        }
         installed = true;
       } finally {
         telemetryLogger?.logUsage('compose.onboarding.installSystemWideCommand', {
@@ -216,68 +222,242 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
   // Push the CLI tool as well (but it will do it postActivation so it does not block the activate() function)
   // Post activation
   setTimeout(() => {
-    postActivate(extensionContext, composeDownload).catch((error: unknown) => {
+    registerCLITool(composeDownload, detect).catch((error: unknown) => {
       console.error('Error activating extension', error);
     });
   }, 0);
 }
 
 // Activate the CLI tool (check version, etc) and register the CLi so it does not block activation.
-async function postActivate(
-  extensionContext: extensionApi.ExtensionContext,
-  composeDownload: ComposeDownload,
-): Promise<void> {
-  // The location of the binary (local storage folder)
-  const binaryPath = path.join(
-    extensionContext.storagePath,
-    'bin',
-    os.isWindows() ? composeCliName + '.exe' : composeCliName,
-  );
-  let binaryVersion = '';
+async function registerCLITool(composeDownload: ComposeDownload, detect: Detect): Promise<void> {
+  // build executable name for current platform
+  const executable = os.isWindows() ? composeCliName + '.exe' : composeCliName;
 
-  // Retrieve the version of the binary by running exec with --short
-  try {
-    const result = await extensionApi.process.exec(binaryPath, ['--version', '--short']);
-    binaryVersion = result.stdout;
-  } catch (e) {
-    console.error(`Error getting compose version: ${e}`);
+  // binary info
+  let binaryInfo: { version: string; path: string; updatable?: boolean } | undefined = undefined;
+
+  // let's check for system-wide
+  const installedSystemWide = await detect.checkSystemWideDockerCompose();
+  let installationSource: extensionApi.CliToolInstallationSource | undefined;
+  if (installedSystemWide) {
+    binaryInfo = await detect.getDockerComposeBinaryInfo(executable);
+    const systemPath = getSystemBinaryPath(composeCliName);
+    installationSource = path.normalize(binaryInfo.path) === path.normalize(systemPath) ? 'extension' : 'external';
+  } else {
+    // if not installed, let's check for local version
+    const extensionExecutable = await detect.getStoragePath();
+    // if local version exists
+    if (extensionExecutable.length !== 0) {
+      binaryInfo = await detect.getDockerComposeBinaryInfo(executable, detect.getExtensionStorageBin());
+      installationSource = 'extension';
+    }
   }
 
-  // Register the CLI tool so it appears in the preferences page. We will detect which version is being ran by
-  // checking the local storage folder for the binary. If it exists, we will run `--version` and parse the information.
-  composeCliTool = extensionApi.cli.createCliTool({
-    name: composeCliName,
-    displayName: composeDisplayName,
-    markdownDescription: composeDescription,
-    images: {
-      icon: imageLocation,
-    },
-    version: binaryVersion,
-    path: binaryPath,
-  });
+  let binaryVersion: string | undefined;
+  let binaryPath: string | undefined;
+  // if binary has been detected we extract its version and path
+  if (binaryInfo) {
+    binaryVersion = removeVersionPrefix(binaryInfo.version);
+    binaryPath = binaryInfo.path;
+  }
 
-  // check if there is a new version to be installed and register the updater
-  const lastReleaseMetadata = await composeDownload.getLatestVersionAsset();
-  const lastReleaseVersion = lastReleaseMetadata.tag.replace('v', '').trim();
-  if (lastReleaseVersion !== binaryVersion) {
-    composeCliToolUpdaterDisposable = composeCliTool.registerUpdate({
-      version: lastReleaseVersion,
-      doUpdate: async _logger => {
-        // download, install system wide and update cli version
-        await composeDownload.download(lastReleaseMetadata);
-        await installBinaryToSystem(binaryPath, 'docker-compose');
-        composeCliTool?.updateVersion({
-          version: lastReleaseVersion,
-        });
-        composeCliToolUpdaterDisposable?.dispose();
+  // update existing CLI tool
+  if (composeCliTool) {
+    if (binaryVersion) {
+      composeCliTool.updateVersion({
+        version: binaryVersion,
+        path: binaryPath,
+        installationSource,
+      });
+    }
+  } else {
+    // Register the CLI tool so it appears in the preferences page.
+    composeCliTool = extensionApi.cli.createCliTool({
+      name: composeCliName,
+      displayName: composeDisplayName,
+      markdownDescription: composeDescription,
+      images: {
+        icon: imageLocation,
       },
+      version: binaryVersion,
+      path: binaryPath,
+      installationSource,
     });
   }
+
+  // register the updater to allow users to upgrade/downgrade their cli
+  let releaseToUpdateTo: ComposeGithubReleaseArtifactMetadata | undefined;
+  let releaseVersionToUpdateTo: string | undefined;
+
+  let latestVersionAsset: ComposeGithubReleaseArtifactMetadata | undefined;
+  try {
+    latestVersionAsset = await composeDownload.getLatestVersionAsset();
+  } catch (error) {
+    console.log('Error when loading compose latest release meta.', error);
+  }
+
+  const latestVersion = latestVersionAsset ? removeVersionPrefix(latestVersionAsset.tag) : undefined;
+
+  const update = {
+    version: latestVersion,
+    selectVersion: async (): Promise<string> => {
+      const selected = await composeDownload.promptUserForVersion(binaryVersion);
+      releaseToUpdateTo = selected;
+      releaseVersionToUpdateTo = removeVersionPrefix(selected.tag);
+      return releaseVersionToUpdateTo;
+    },
+    doUpdate: async (): Promise<void> => {
+      if (!binaryVersion || !binaryPath) {
+        throw new Error(`Cannot update ${composeCliName}. No cli tool installed.`);
+      }
+      if (!releaseVersionToUpdateTo) {
+        // update request to latest version
+        if (latestVersionAsset) {
+          releaseToUpdateTo = latestVersionAsset;
+          releaseVersionToUpdateTo = latestVersion;
+        }
+      }
+      if (!releaseToUpdateTo || !releaseVersionToUpdateTo) {
+        throw new Error(`Cannot update ${binaryInfo?.path} version ${binaryVersion}. No release selected.`);
+      }
+      if (!binaryInfo?.updatable) {
+        throw new Error(
+          `Cannot update ${binaryInfo?.path} version ${binaryVersion} to ${releaseVersionToUpdateTo} as it was not installed by podman-desktop`,
+        );
+      }
+
+      // download, install system wide and update cli version
+      await composeDownload.download(releaseToUpdateTo);
+      // get the binary in the extension folder
+      const storagePath = await detect.getStoragePath();
+      binaryPath = await installBinaryToSystem(storagePath, composeCliName);
+      composeCliTool?.updateVersion({
+        version: releaseVersionToUpdateTo,
+        path: binaryPath,
+        installationSource: 'extension',
+      });
+      binaryVersion = releaseVersionToUpdateTo;
+      if (releaseVersionToUpdateTo === latestVersion) {
+        delete update.version;
+      } else {
+        update.version = latestVersion;
+      }
+      releaseVersionToUpdateTo = undefined;
+      releaseToUpdateTo = undefined;
+    },
+  };
+
+  // register installer
+  let releaseToInstall: ComposeGithubReleaseArtifactMetadata | undefined;
+  let releaseVersionToInstall: string | undefined;
+
+  composeCliToolInstallerDisposable = composeCliTool.registerInstaller({
+    selectVersion: async () => {
+      const selected = await composeDownload.promptUserForVersion();
+      releaseToInstall = selected;
+      releaseVersionToInstall = removeVersionPrefix(selected.tag);
+      return releaseVersionToInstall;
+    },
+    doInstall: async _logger => {
+      if (binaryVersion ?? binaryPath) {
+        throw new Error(
+          `Cannot install ${composeCliName}. Version ${binaryVersion} in ${binaryPath} is already installed.`,
+        );
+      }
+      if (!releaseToInstall || !releaseVersionToInstall) {
+        throw new Error(`Cannot install ${composeCliName}. No release selected.`);
+      }
+
+      // download, install system wide and update cli version
+      await composeDownload.download(releaseToInstall);
+      // get the binary in the extension folder
+      const storagePath = await detect.getStoragePath();
+      binaryPath = await installBinaryToSystem(storagePath, composeCliName);
+      composeCliTool?.updateVersion({
+        version: releaseVersionToInstall,
+        path: binaryPath,
+        installationSource: 'extension',
+      });
+      binaryVersion = releaseVersionToInstall;
+      if (releaseVersionToInstall === latestVersion) {
+        delete update.version;
+      } else {
+        update.version = latestVersion;
+      }
+      releaseVersionToInstall = undefined;
+      releaseToInstall = undefined;
+    },
+    doUninstall: async _logger => {
+      if (!binaryVersion) {
+        throw new Error(`Cannot uninstall ${composeCliName}. No version detected.`);
+      }
+
+      // delete the executable stored in the storage folder
+      const storagePath = await detect.getStoragePath();
+      await deleteFile(storagePath);
+
+      // delete the executable in the system path
+      const systemPath = getSystemBinaryPath(composeCliName);
+      await deleteFile(systemPath);
+
+      // update the version to undefined
+      binaryVersion = undefined;
+      binaryPath = undefined;
+    },
+  });
+
+  // if the tool has been installed by the user we do not register the updater/installer
+  if (installationSource === 'external') {
+    return;
+  }
+
+  composeCliToolUpdaterDisposable = composeCliTool.registerUpdate(update);
+}
+
+async function deleteFile(filePath: string): Promise<void> {
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error.code === 'EACCES' || error.code === 'EPERM')
+      ) {
+        await deleteFileAsAdmin(filePath);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
+async function deleteFileAsAdmin(filePath: string): Promise<void> {
+  const system = process.platform;
+
+  const args: string[] = [filePath];
+  const command = system === 'win32' ? 'del' : 'rm';
+
+  try {
+    // Use admin prileges
+    await extensionApi.process.exec(command, args, { isAdmin: true });
+  } catch (error) {
+    console.error(`Failed to uninstall '${filePath}': ${error}`);
+    throw error;
+  }
+}
+
+function removeVersionPrefix(version: string): string {
+  return version.replace('v', '').trim();
 }
 
 export async function deactivate(): Promise<void> {
   // Dispose the CLI tool
   if (composeCliTool) {
     composeCliTool.dispose();
+    composeCliTool = undefined;
   }
+  composeCliToolUpdaterDisposable?.dispose();
+  composeCliToolInstallerDisposable?.dispose();
 }

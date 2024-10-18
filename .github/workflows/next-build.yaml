@@ -31,7 +31,7 @@ jobs:
 
   tag:
     name: Tagging
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       githubTag: ${{ steps.TAG_UTIL.outputs.githubTag}}
       desktopVersion: ${{ steps.TAG_UTIL.outputs.desktopVersion}}
@@ -39,35 +39,49 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+         token: ${{ secrets.PODMAN_DESKTOP_BOT_TOKEN }}
+         fetch-depth: 0
       - name: Generate tag utilities
         id: TAG_UTIL
         run: |
             CURRENT_DAY=$(date +'%Y%m%d')
             SHORT_SHA1=$(git rev-parse --short HEAD)
-            TAG_PATTERN=0.0.$(date +'%Y%m%d%H%M')-${SHORT_SHA1}
+            # grab the version from the package.json
+            PODMAN_DEKSTOP_VERSION=$(jq -r '.version' package.json)
+            # remove the -next from the version
+            STRIPPED_VERSION=${PODMAN_DEKSTOP_VERSION%-next}
+            TAG_PATTERN=${STRIPPED_VERSION}-$(date +'%Y%m%d%H%M')-${SHORT_SHA1}
             echo "githubTag=v$TAG_PATTERN" >> ${GITHUB_OUTPUT}
             echo "desktopVersion=$TAG_PATTERN" >> ${GITHUB_OUTPUT}
       - name: tag
         run: |
           git config --local user.name ${{ github.actor }}
+          git config --local user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ steps.TAG_UTIL.outputs.desktopVersion }}\",#g" package.json
           find extensions/* -maxdepth 2 -name "package.json" | xargs -I {} sed -i "s#version\":\ \"\(.*\)\",#version\":\ \"${{ steps.TAG_UTIL.outputs.desktopVersion }}\",#g" {}
+          # change the repository field to be the prerelease repository in package.json file
+          sed -i "s#\"repository\":\ \"\(.*\)\",#\"repository\":\ \"https://github.com/containers/podman-desktop-prereleases\",#g" package.json
           cat package.json
           git add package.json extensions/*/package.json
           git commit -m "chore: tag ${{ steps.TAG_UTIL.outputs.githubTag }}"
           echo "Tagging with ${{ steps.TAG_UTIL.outputs.githubTag }}"
           git tag ${{ steps.TAG_UTIL.outputs.githubTag }}
-          git push origin ${{ steps.TAG_UTIL.outputs.githubTag }}
+          # push tag to the prereleases repository
+          git remote add prereleases https://github.com/containers/podman-desktop-prereleases
+          git push prereleases ${{ steps.TAG_UTIL.outputs.githubTag }}
+
       - name: Create Release
         id: create_release
         uses: ncipollo/release-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag: ${{ steps.TAG_UTIL.outputs.githubTag }}
           name: ${{ steps.TAG_UTIL.outputs.githubTag }}
           draft: true
           prerelease: true
+          owner: containers
+          repo: podman-desktop-prereleases
+          token: ${{ secrets.PODMAN_DESKTOP_BOT_TOKEN }}
 
   build:
     name: Build / ${{ matrix.os }}
@@ -76,59 +90,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-22.04, macos-14]
+        os: [windows-2022, ubuntu-24.04, macos-14]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: containers/podman-desktop-prereleases
           ref: ${{ needs.tag.outputs.githubTag}}
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Get yarn cache directory path (Windows)
-        if: ${{ matrix.os=='windows-2022' }}
-        id: yarn-cache-dir-path-windows
-        run: echo "dir=$(yarn cache dir)" >> ${env:GITHUB_OUTPUT}
-
-      - name: Get yarn cache directory path (mac/Linux)
-        if: ${{ matrix.os=='ubuntu-22.04' || matrix.os=='macos-14' }}
-        id: yarn-cache-dir-path-unix
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
-
-      - uses: actions/cache@v4
-        if: ${{ matrix.os=='windows-2022' }}
-        id: yarn-cache-windows
-        with:
-          path: ${{ steps.yarn-cache-dir-path-windows.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-      - uses: actions/cache@v4
-        if: ${{ matrix.os=='ubuntu-22.04' || matrix.os=='macos-14' }}
-        id: yarn-cache-unix
-        with:
-          path: ${{ steps.yarn-cache-dir-path-unix.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-
       - name: setup telemetry key for production
         run: |
           sed -i -r -e "s/SEGMENT_KEY = '.*'/SEGMENT_KEY = '${{ secrets.SEGMENT_WRITE_KEY }}'/" packages/main/src/plugin/telemetry/telemetry.ts
 
-      - name: yarn
-        run: |
-          yarn --frozen-lockfile --network-timeout 180000
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Install flatpak on Linux
-        if: ${{ matrix.os=='ubuntu-22.04' }}
+        if: ${{ matrix.os=='ubuntu-24.04' }}
         run: |
           sudo apt-get update
           sudo apt-get install flatpak -y
@@ -143,7 +135,7 @@ jobs:
           echo "CSC_LINK=${{secrets.CSC_LINK}}" >> $GITHUB_ENV
           echo "CSC_KEY_PASSWORD=${{secrets.CSC_KEY_PASSWORD}}" >> $GITHUB_ENV
           echo "APPLE_ID=${{secrets.APPLE_ID}}" >> $GITHUB_ENV
-          echo "APPLE_ID_PASSWORD=${{secrets.APPLE_ID_PASSWORD}}" >> $GITHUB_ENV
+          echo "APPLE_APP_SPECIFIC_PASSWORD=${{secrets.APPLE_APP_SPECIFIC_PASSWORD}}" >> $GITHUB_ENV
           echo "APPLE_TEAM_ID=${{secrets.APPLE_TEAM_ID}}" >> $GITHUB_ENV
 
       - name: Install Azure SignTool on Windows
@@ -158,12 +150,14 @@ jobs:
 
       - name: Run Build
         timeout-minutes: 40
-        run: yarn compile:next
+        run: pnpm compile:next
+        env:
+          GITHUB_TOKEN: ${{ secrets.PODMAN_DESKTOP_BOT_TOKEN }}
 
   release:
     needs: [tag, build]
     name: Release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: id
         run: echo the release id is ${{ needs.tag.outputs.releaseId}}
@@ -171,34 +165,30 @@ jobs:
       - name: Publish release
         uses: StuYarrow/publish-release@v1.1.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PODMAN_DESKTOP_BOT_TOKEN }}
         with:
           id: ${{ needs.tag.outputs.releaseId}}
+          repo: podman-desktop-prereleases
+          owner: containers
 
   publish:
     needs: [tag, release]
     name: Publish
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> ${GITHUB_OUTPUT}
-
-      - uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-      - name: Execute yarn
-        run: yarn --frozen-lockfile --network-timeout 180000
+      - name: Execute pnpm
+        run: pnpm install
 
       - name: Set-up npmjs auth token
         run: printf "//registry.npmjs.org/:_authToken=${{ secrets.NPM_AUTH_TOKEN }}\n" >> ~/.npmrc
@@ -207,16 +197,29 @@ jobs:
         run: |
           echo "Using version ${{ needs.tag.outputs.desktopVersion }}"
           sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ needs.tag.outputs.desktopVersion }}\",#g" packages/extension-api/package.json
-          cd packages/extension-api && yarn publish --tag next --no-git-tag-version --new-version "${{ needs.tag.outputs.desktopVersion }}" --access public
+          cd packages/extension-api && pnpm publish --tag next --no-git-checks --access public
+
+      - name: Publish Webview API to npmjs
+        run: |
+          echo "Using version ${{ needs.tag.outputs.desktopVersion }}"
+          sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ needs.tag.outputs.desktopVersion }}\",#g" packages/webview-api/package.json
+          cd packages/webview-api && pnpm publish --tag next --no-git-checks --access public
 
       - name: Publish ui/svelte to npmjs
         run: |
           echo "Using version ${{ needs.tag.outputs.desktopVersion }}"
           sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ needs.tag.outputs.desktopVersion }}\",#g" packages/ui/package.json
-          cd packages/ui && yarn build && yarn publish --tag next --no-git-tag-version --new-version "${{ needs.tag.outputs.desktopVersion }}" --access public
+          cd packages/ui && pnpm build && pnpm publish --tag next --no-git-checks --access public
 
       - name: Publish tests-playwright to npmjs
         run: |
           echo "Using version ${{ needs.tag.outputs.desktopVersion }}"
           sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ needs.tag.outputs.desktopVersion }}\",#g" tests/playwright/package.json
-          cd tests/playwright && yarn build && yarn publish --tag next --no-git-tag-version --new-version "${{ needs.tag.outputs.desktopVersion }}" --access public
+          cd tests/playwright && pnpm build && pnpm publish --tag next --no-git-checks --access public
+
+      - name: Publish Podman Extension API to npmjs
+        run: |
+          echo "Using version ${{ needs.tag.outputs.desktopVersion }}"
+          sed -i  "s#version\":\ \"\(.*\)\",#version\":\ \"${{ needs.tag.outputs.desktopVersion }}\",#g" extensions/podman/packages/api/package.json
+          cd extensions/podman/packages/api
+          pnpm publish --tag next --no-git-checks --access public

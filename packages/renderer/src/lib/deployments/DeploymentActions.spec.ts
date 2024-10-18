@@ -27,15 +27,36 @@ import type { DeploymentUI } from './DeploymentUI';
 const updateMock = vi.fn();
 const deleteMock = vi.fn();
 
-const deployment: DeploymentUI = {
-  name: 'my-deployment',
-  status: 'RUNNING',
-  namespace: '',
-  replicas: 0,
-  ready: 0,
-  selected: false,
-  conditions: [],
-};
+class DeploymentfUIImpl {
+  #status: string;
+  constructor(
+    public name: string,
+    initialStatus: string,
+    public namespace: string,
+    public replicas: number,
+    public ready: number,
+    public selected: boolean,
+    public conditions: unknown[],
+  ) {
+    this.#status = initialStatus;
+  }
+  set status(status: string) {
+    this.#status = status;
+  }
+  get status(): string {
+    return this.#status;
+  }
+}
+
+const deployment: DeploymentUI = new DeploymentfUIImpl(
+  'my-deployment',
+  'RUNNING',
+  '',
+  0,
+  0,
+  false,
+  [],
+) as unknown as DeploymentUI;
 
 beforeEach(() => {
   (window as any).kubernetesDeleteDeployment = deleteMock;
@@ -51,8 +72,7 @@ test('Expect no error and status deleting deployment', async () => {
   (window as any).showMessageBox = showMessageBoxMock;
   showMessageBoxMock.mockResolvedValue({ response: 0 });
 
-  const { component } = render(DeploymentActions, { deployment });
-  component.$on('update', updateMock);
+  render(DeploymentActions, { deployment, onUpdate: updateMock });
 
   // click on delete buttons
   const deleteButton = screen.getByRole('button', { name: 'Delete Deployment' });

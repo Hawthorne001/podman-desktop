@@ -16,6 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import type { WebviewApi } from '@podman-desktop/webview-api';
 import type { IpcRendererEvent } from 'electron';
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -96,8 +97,6 @@ export class WebviewPreload {
 
     if (userTheme === AppearanceSettings.SystemEnumValue) {
       userTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      // for now it's dark for system
-      userTheme = 'dark';
     }
 
     const isDarkTheme = await this.isDarkTheme(userTheme);
@@ -125,6 +124,7 @@ export class WebviewPreload {
       });
 
       this.#cssStyleElement = document.createElement('style');
+      // eslint-disable-next-line sonarjs/deprecation
       this.#cssStyleElement.type = 'text/css';
       this.#cssStyleElement.id = 'podman-desktop-colors-styles';
       this.#cssStyleElement.media = 'screen';
@@ -135,32 +135,32 @@ export class WebviewPreload {
   }
 
   // build the function that will be exposed to the webview for getState/postMessage/setState
-  protected buildApi(): unknown {
-    return () => {
-      // initialize the state from the webview
-      let state: unknown = this.#webviewInfo?.state ?? {};
-      if (this.#acquiredApi) {
-        throw new Error('An instance of the Podman Desktop API has already been acquired');
-      }
-      // can only be called once;
-      this.#acquiredApi = true;
-      return Object.freeze({
-        getState: () => {
-          return state;
-        },
-        postMessage: (msg: unknown) => {
-          return this.postWebviewMessage({ command: 'onmessage', data: msg });
-        },
-        setState: async (newState: unknown) => {
-          state = newState;
-          // need to send back the state to the main process
-          this.ipcInvoke('webviewRegistry:update-state', this.#webviewInfo?.id, newState).catch((error: unknown) => {
-            console.error('Error while updating the state', error);
-          });
-        },
-      });
-    };
+  protected buildApi(): WebviewApi {
+    // display stack trace
+    // initialize the state from the webview
+    let state: unknown = this.#webviewInfo?.state ?? {};
+    if (this.#acquiredApi) {
+      throw new Error('An instance of the Podman Desktop API has already been acquired');
+    }
+    // can only be called once;
+    this.#acquiredApi = true;
+    return Object.freeze({
+      getState: (): unknown => {
+        return state;
+      },
+      postMessage: (msg: unknown): void => {
+        return this.postWebviewMessage({ command: 'onmessage', data: msg });
+      },
+      setState: async (newState: unknown): Promise<void> => {
+        state = newState;
+        // need to send back the state to the main process
+        this.ipcInvoke('webviewRegistry:update-state', this.#webviewInfo?.id, newState).catch((error: unknown) => {
+          console.error('Error while updating the state', error);
+        });
+      },
+    });
   }
+
   protected getTheme(): Promise<string> {
     return this.ipcInvoke(
       'configuration-registry:getConfigurationValue',
@@ -190,10 +190,11 @@ export class WebviewPreload {
       this.changeContent();
     });
 
-    contextBridge.exposeInMainWorld('acquirePodmanDesktopApi', this.buildApi());
-
     const webviews: WebviewInfo[] = await this.getWebviews();
     this.#webviewInfo = webviews.find(webview => webview.id === this.#webviewId);
+
+    contextBridge.exposeInMainWorld('acquirePodmanDesktopApi', () => this.buildApi());
+
     this.changeContent();
 
     // broadcast messages from the main process to the webview

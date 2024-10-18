@@ -18,16 +18,14 @@
 
 import type { Preview } from '@storybook/svelte';
 import 'tailwindcss/tailwind.css';
-import { createElement } from 'react';
-import { useDarkMode } from 'storybook-dark-mode';
+import { createElement, useState, useEffect } from 'react';
+import { DARK_MODE_EVENT_NAME } from 'storybook-dark-mode';
 import { themes } from '@storybook/theming';
 import { DocsContainer } from '@storybook/addon-docs';
-import './dark.css';
-import './light.css';
+import './themes.css';
 
 const preview: Preview = {
   parameters: {
-    actions: { argTypesRegex: '^on[A-Z].*' },
     controls: {
       matchers: {
         color: /(background|color)$/i,
@@ -36,8 +34,8 @@ const preview: Preview = {
     },
     darkMode: {
       current: 'light',
-      darkClass: 'dark-scheme',
-      lightClass: 'light-scheme',
+      darkClass: 'dark',
+      lightClass: 'light',
       dark: {
         ...themes.dark,
         appPreviewBg: 'transparent',
@@ -50,7 +48,14 @@ const preview: Preview = {
     },
     docs: {
       container: props => {
-        const isDark = useDarkMode();
+        const [isDark, setDark] = useState(true);
+
+        useEffect(() => {
+          props.context.channel.on(DARK_MODE_EVENT_NAME, setDark);
+
+          return () => props.context.channel.removeListener(DARK_MODE_EVENT_NAME, setDark);
+        }, [props.context.channel]);
+
         const currentProps = { ...props };
         currentProps.theme = isDark ? themes.dark : themes.light;
         return createElement(DocsContainer, currentProps);

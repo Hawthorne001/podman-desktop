@@ -16,6 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import { expect as playExpect } from '@playwright/test';
 import type { Locator, Page } from 'playwright';
 
 import { waitUntil } from '../../utility/wait';
@@ -25,26 +26,39 @@ export class RegistriesPage extends SettingsPage {
   readonly heading: Locator;
   readonly addRegistryButton: Locator;
   readonly registriesTable: Locator;
+  readonly addRegistryDialog: Locator;
+  readonly cancelDialogButton: Locator;
+  readonly confirmDialogButton: Locator;
+  readonly registryUrlField: Locator;
+  readonly registryUsernameField: Locator;
+  readonly registryPswdField: Locator;
 
   constructor(page: Page) {
     super(page, 'Registries');
-    this.heading = page.getByText('Registries');
+    this.heading = page.getByRole('heading').and(page.getByText('Registries', { exact: true }));
     this.addRegistryButton = page.getByRole('button', { name: 'Add registry' });
     this.registriesTable = page.getByRole('table', { name: 'Registries' });
+    this.addRegistryDialog = page.getByRole('dialog', { name: 'Add Registry' });
+    this.cancelDialogButton = this.addRegistryDialog.getByRole('button', { name: 'Cancel' });
+    this.confirmDialogButton = this.addRegistryDialog.getByRole('button', { name: 'Add' });
+    this.registryUrlField = this.addRegistryDialog.getByPlaceholder('https://registry.io');
+    this.registryUsernameField = this.addRegistryDialog.getByPlaceholder('username');
+    this.registryPswdField = this.addRegistryDialog.getByPlaceholder('password');
   }
 
   async createRegistry(url: string, username: string, pswd: string): Promise<void> {
+    await this.page.waitForTimeout(4000);
+    await playExpect(this.addRegistryButton).toBeEnabled();
     await this.addRegistryButton.click();
+    await playExpect(this.addRegistryDialog).toBeVisible();
+    await playExpect(this.cancelDialogButton).toBeEnabled();
 
-    const registryUrl = this.page.getByLabel('Register URL');
-    const registryUsername = this.page.getByLabel('Username');
-    const registryPswd = this.page.getByRole('textbox', { name: 'Password' });
-    await registryUrl.pressSequentially(url, { delay: 100 });
-    await registryUsername.pressSequentially(username, { delay: 100 });
-    await registryPswd.pressSequentially(pswd, { delay: 100 });
+    await this.registryUrlField.fill(url);
+    await this.registryUsernameField.fill(username);
+    await this.registryPswdField.fill(pswd);
 
-    const loginButton = this.page.getByRole('button', { name: 'Login' });
-    await this.loginButtonHandling(loginButton);
+    await playExpect(this.confirmDialogButton).toBeEnabled();
+    await this.confirmDialogButton.click();
   }
 
   async editRegistry(title: string, newUsername: string, newPswd: string): Promise<void> {
@@ -94,10 +108,7 @@ export class RegistriesPage extends SettingsPage {
         async function loginIsEnabled() {
           return await loginButton.isEnabled();
         },
-        5000,
-        1000,
-        true,
-        'Login Button not enabled in time',
+        { message: 'Login Button not enabled in time' },
       );
       await loginButton.click({ timeout: 3000 });
     } catch (err) {

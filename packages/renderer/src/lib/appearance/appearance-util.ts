@@ -17,30 +17,14 @@
  ***********************************************************************/
 
 import { AppearanceSettings } from '../../../../main/src/plugin/appearance-settings';
+import { isDark } from '../../stores/appearance';
+
+let isDarkTheme = false;
+isDark.subscribe(value => {
+  isDarkTheme = value;
+});
 
 export class AppearanceUtil {
-  async isDarkMode(): Promise<boolean> {
-    // get the configuration of the appearance
-    const appearance = await window.getConfigurationValue<string>(
-      AppearanceSettings.SectionName + '.' + AppearanceSettings.Appearance,
-    );
-
-    let isDark = false;
-
-    if (appearance === AppearanceSettings.SystemEnumValue) {
-      // need to read the system default theme using the window.matchMedia
-      isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      //FIXME: for now we hardcode to the dark theme even if the Operatin System is using light theme
-      // as it renders correctly only in dark mode today
-      isDark = true;
-    } else if (appearance === AppearanceSettings.LightEnumValue) {
-      isDark = false;
-    } else if (appearance === AppearanceSettings.DarkEnumValue) {
-      isDark = true;
-    }
-    return isDark;
-  }
-
   async getTheme(): Promise<string> {
     const themeName = await window.getConfigurationValue<string>(
       AppearanceSettings.SectionName + '.' + AppearanceSettings.Appearance,
@@ -49,9 +33,7 @@ export class AppearanceUtil {
     const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 
     if (themeName === AppearanceSettings.SystemEnumValue) {
-      //FIXME: for now we hardcode to the dark theme even if the Operating System is using light theme
-      // return systemTheme;
-      return 'dark';
+      return systemTheme;
     }
 
     return themeName ?? systemTheme;
@@ -69,12 +51,31 @@ export class AppearanceUtil {
       return icon;
     }
 
-    const isDark: boolean = await this.isDarkMode();
-    if (isDark && icon.dark) {
+    if (isDarkTheme && icon.dark) {
       return icon.dark;
-    } else if (!isDark && icon.light) {
+    } else if (!isDarkTheme && icon.light) {
       return icon.light;
     }
     return undefined;
+  }
+
+  /**
+   * Helper function to look up a color value from the theme.
+   */
+  getColor(val: string): string {
+    // find the current terminal background color
+    const computedStyle = window.getComputedStyle(document.documentElement);
+    let color = computedStyle.getPropertyValue(val).trim();
+
+    // convert to 6 char RGB value since some things don't support 3 char format
+    if (color?.length < 6) {
+      color = color
+        .split('')
+        .map(c => {
+          return c === '#' ? c : c + c;
+        })
+        .join('');
+    }
+    return color;
   }
 }

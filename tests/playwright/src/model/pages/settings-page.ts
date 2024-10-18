@@ -22,15 +22,24 @@ import { BasePage } from './base-page';
 
 export abstract class SettingsPage extends BasePage {
   readonly tabName: string;
+  readonly header: Locator;
+  readonly content: Locator;
 
   constructor(page: Page, tabName: string) {
     super(page);
     this.tabName = tabName;
+    this.header = this.page.getByRole('region', { name: 'Header' });
+    this.content = this.page.getByRole('region', { name: 'Content' });
   }
 
   async getTab(): Promise<Locator> {
+    let tabName = this.tabName;
+    if (this.tabName === 'Preferences') {
+      // special case for lower case first letter in 'preferences' tab
+      tabName = this.tabName.toLowerCase();
+    }
     return this.page
       .getByRole('navigation', { name: 'PreferencesNavigation' })
-      .getByRole('link', { name: this.tabName, exact: true });
+      .getByRole('link', { name: tabName, exact: true });
   }
 }

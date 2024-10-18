@@ -49,7 +49,42 @@ export class ContainersPage extends MainPage {
     return new ContainerDetailsPage(this.page, name);
   }
 
-  async stopContainer(container: string): Promise<ContainerDetailsPage> {
+  async startContainer(containerName: string): Promise<ContainersPage> {
+    const containerRow = await this.getContainerRowByName(containerName);
+    if (containerRow === undefined) {
+      throw Error(`Container: '${containerName}' does not exist`);
+    }
+    const containerRowStartButton = containerRow.getByRole('button', { name: 'Start Container' });
+    await playExpect(containerRowStartButton).toBeVisible();
+    await containerRowStartButton.click();
+    return this;
+  }
+
+  async stopContainer(containerName: string): Promise<ContainersPage> {
+    const containerRow = await this.getContainerRowByName(containerName);
+    if (containerRow === undefined) {
+      throw Error(`Container: '${containerName}' does not exist`);
+    }
+    const containerRowStopButton = containerRow.getByRole('button', { name: 'Stop Container' });
+    await playExpect(containerRowStopButton).toBeVisible();
+    await containerRowStopButton.click();
+    return this;
+  }
+
+  async deleteContainer(containerName: string): Promise<ContainersPage> {
+    const containerRow = await this.getContainerRowByName(containerName);
+    if (containerRow === undefined) {
+      throw Error(`Container: '${containerName}' does not exist`);
+    }
+    const containerRowDeleteButton = containerRow.getByRole('button', { name: 'Delete Container' });
+    await playExpect(containerRowDeleteButton).toBeVisible();
+    await playExpect(containerRowDeleteButton).toBeEnabled();
+    await containerRowDeleteButton.click();
+    await handleConfirmationDialog(this.page);
+    return new ContainersPage(this.page);
+  }
+
+  async stopContainerFromDetails(container: string): Promise<ContainerDetailsPage> {
     const containerDetailsPage = await this.openContainersDetails(container);
     await playExpect(containerDetailsPage.heading).toBeVisible();
     await playExpect(containerDetailsPage.heading).toContainText(container);
@@ -59,39 +94,31 @@ export class ContainersPage extends MainPage {
   }
 
   async getContainerRowByName(name: string): Promise<Locator | undefined> {
-    if (await this.pageIsEmpty()) {
-      return undefined;
-    }
-    let containersTable;
-    try {
-      containersTable = await this.getTable();
-      const rows = await containersTable.getByRole('row').all();
-
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const thirdCell = await rows[i].getByRole('cell').nth(3).getByText(name, { exact: true }).count();
-
-        if (thirdCell) {
-          return rows[i];
-        }
-      }
-    } catch (err) {
-      console.log(`Exception caught on containers page with message: ${err}`);
-    }
-    return undefined;
+    return this.getRowFromTableByName(name);
   }
 
   async uncheckAllContainers(): Promise<void> {
     let containersTable;
     try {
       containersTable = await this.getTable();
-      const rows = await containersTable.getByRole('row').all();
+      await playExpect(containersTable).toBeVisible();
+      const controlRow = containersTable.getByRole('row').first();
+      await playExpect(controlRow).toBeAttached();
+      const checkboxColumnHeader = controlRow.getByRole('columnheader').nth(1);
+      await playExpect(checkboxColumnHeader).toBeAttached();
+      const containersToggle = checkboxColumnHeader.getByTitle('Toggle all');
+      await playExpect(containersToggle).toBeAttached();
+      // <svg> cannot be resolved using getByRole('img') ; const containersToggleSvg = containersToggle.getByRole('img');
 
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const zeroCell = await rows[i].getByRole('cell').nth(0).innerText({ timeout: 1000 });
-        if (zeroCell.indexOf(String.fromCharCode(160)) === 0) continue;
-
-        if (await rows[i].getByRole('checkbox').isChecked()) await rows[i].getByRole('cell').nth(1).click();
+      if ((await containersToggle.innerHTML()).includes('pd-input-checkbox-indeterminate')) {
+        await containersToggle.click();
       }
+
+      if ((await containersToggle.innerHTML()).includes('pd-input-checkbox-checked')) {
+        await containersToggle.click();
+      }
+
+      playExpect(await containersToggle.innerHTML()).toContain('pd-input-checkbox-unchecked');
     } catch (err) {
       console.log(`Exception caught on containers page when checking cells for unchecking with message: ${err}`);
     }
@@ -102,7 +129,7 @@ export class ContainersPage extends MainPage {
   }
 
   async openCreatePodPage(names: string[]): Promise<CreatePodsPage> {
-    for await (const containerName of names) {
+    for (const containerName of names) {
       const row = await this.getContainerRowByName(containerName);
       if (row === undefined) {
         throw Error('Container cannot be podified');

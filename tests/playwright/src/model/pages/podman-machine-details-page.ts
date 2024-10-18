@@ -29,11 +29,11 @@ export class PodmanMachineDetails extends ResourcesPage {
   readonly podmanMachineStopButton: Locator;
   readonly podmanMachineDeleteButton: Locator;
 
-  constructor(page: Page) {
+  constructor(page: Page, podmanMachineName: string) {
     super(page);
-    this.podmanMachineName = this.getPage().getByRole('heading', { name: 'Podman Machine' });
-    this.podmanMachineStatus = this.getPage().getByLabel('Connection Status Label');
-    this.podmanMachineConnectionActions = this.getPage().getByRole('group', { name: 'Connection Actions' });
+    this.podmanMachineName = page.getByRole('heading', { name: podmanMachineName });
+    this.podmanMachineStatus = page.getByLabel('Connection Status Label');
+    this.podmanMachineConnectionActions = page.getByRole('group', { name: 'Connection Actions' });
     this.podmanMachineStartButton = this.podmanMachineConnectionActions.getByRole('button', {
       name: 'Start',
       exact: true,

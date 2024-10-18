@@ -100,8 +100,10 @@ const setupMainPackageWatcher = ({ config: { server, extensions } }) => {
       extensions.forEach(extension => {
         extensionArgs.push(EXTENSION_OPTION);
         extensionArgs.push(extension);
-      })
-      spawnProcess = spawn(String(electronPath), [ '--remote-debugging-port=9223', '.', ...extensionArgs], { env: { ...process.env, ELECTRON_IS_DEV: 1 } });
+      });
+      spawnProcess = spawn(String(electronPath), ['--remote-debugging-port=9223', '.', ...extensionArgs], {
+        env: { ...process.env, ELECTRON_IS_DEV: 1 },
+      });
 
       spawnProcess.stdout.on('data', d => d.toString().trim() && logger.warn(d.toString(), { timestamp: true }));
       spawnProcess.stderr.on('data', d => {
@@ -132,10 +134,13 @@ const setupUiPackageWatcher = () => {
     spawnProcess = null;
   }
 
-  const exe = join(__dirname, '..', 'node_modules', '.bin', 'svelte-package').concat(process.platform === 'win32' ? '.cmd': '');
+  const exe = join(__dirname, '..', 'node_modules', '.bin', 'svelte-package').concat(
+    process.platform === 'win32' ? '.cmd' : '',
+  );
   spawnProcess = spawn(exe, ['-w'], {
     cwd: './packages/ui/',
     env: { ...process.env },
+    shell: process.platform === 'win32',
   });
 
   spawnProcess.stdout.on('data', d => d.toString().trim() && logger.warn(d.toString(), { timestamp: true }));
@@ -192,7 +197,7 @@ const setupPreloadDockerExtensionPackageWatcher = ({ ws }) =>
     },
   });
 
-  const setupPreloadWebviewPackageWatcher = ({ ws }) =>
+const setupPreloadWebviewPackageWatcher = ({ ws }) =>
   getWatcher({
     name: 'reload-page-on-preload-webview-package-change',
     configFile: 'packages/preload-webview/vite.config.js',
@@ -211,7 +216,6 @@ const setupPreloadDockerExtensionPackageWatcher = ({ ws }) =>
     },
   });
 
-
 /**
  * Start or restart App when source files are changed
  * @param {{ws: import('vite').WebSocketServer}} WebSocketServer
@@ -221,7 +225,7 @@ const setupExtensionApiWatcher = name => {
   const folderName = resolve(name);
 
   console.log('dirname is', folderName);
-  spawnProcess = spawn('yarn', ['--cwd', folderName, 'watch'], { shell: process.platform === 'win32' });
+  spawnProcess = spawn('pnpm', ['watch'], { cwd: folderName, shell: process.platform === 'win32' });
 
   spawnProcess.stdout.on('data', d => d.toString().trim() && console.warn(d.toString(), { timestamp: true }));
   spawnProcess.stderr.on('data', d => {
@@ -236,8 +240,8 @@ const setupExtensionApiWatcher = name => {
 
 (async () => {
   try {
-    const extensions = []
-    for(let index=0; index < process.argv.length;index++) {
+    const extensions = [];
+    for (let index = 0; index < process.argv.length; index++) {
       if (process.argv[index] === EXTENSION_OPTION && index < process.argv.length - 1) {
         extensions.push(resolve(process.argv[++index]));
       }
@@ -245,7 +249,7 @@ const setupExtensionApiWatcher = name => {
     const viteDevServer = await createServer({
       ...sharedConfig,
       configFile: 'packages/renderer/vite.config.js',
-      extensions: extensions
+      extensions: extensions,
     });
 
     await viteDevServer.listen();
@@ -253,10 +257,25 @@ const setupExtensionApiWatcher = name => {
     // get extensions folder
     const extensionsFolder = resolve(__dirname, '../extensions/');
 
-    // loop on all subfolders from the extensions folder
+    // Loop on all subfolders from the extensions folder.
+    // If package.json is present it is an extension without API.
+    // If package.json is missing look into packages/extension folder
+    // and if package.json is present it is na extension with API.
     readdirSync(extensionsFolder, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory() && existsSync(join(extensionsFolder, dirent.name, 'package.json')))
-      .forEach(dirent => setupExtensionApiWatcher(join(extensionsFolder, dirent.name)));
+      .filter(
+        dirent =>
+          dirent.isDirectory() &&
+          (existsSync(join(extensionsFolder, dirent.name, 'package.json')) ||
+            existsSync(extensionsFolder, dirent.name, 'packages', 'extension', 'package.json')),
+      )
+      .forEach(dirent => {
+        const apiExtPath = join(extensionsFolder, dirent.name, 'packages', 'extension');
+        if (existsSync(join(apiExtPath, 'package.json'))) {
+          setupExtensionApiWatcher(apiExtPath);
+        } else if (existsSync(join(extensionsFolder, dirent.name, 'package.json'))) {
+          setupExtensionApiWatcher(join(extensionsFolder, dirent.name));
+        }
+      });
 
     for (const extension of extensions) {
       setupExtensionApiWatcher(extension);

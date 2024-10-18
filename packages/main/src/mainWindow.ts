@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2022 Red Hat, Inc.
+ * Copyright (C) 2022-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,19 @@
 import { join } from 'node:path';
 import { URL } from 'node:url';
 
-import type { BrowserWindowConstructorOptions } from 'electron';
-import { app, autoUpdater, BrowserWindow, ipcMain, Menu, nativeTheme, screen } from 'electron';
+import type { BrowserWindowConstructorOptions, Rectangle } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, screen } from 'electron';
 import contextMenu from 'electron-context-menu';
-import { aboutMenuItem } from 'electron-util/main';
 
+import { buildDevelopmentMenu } from './development-menu-builder.js';
+import { NavigationItemsMenuBuilder } from './navigation-items-menu-builder.js';
 import { OpenDevTools } from './open-dev-tools.js';
 import type { ConfigurationRegistry } from './plugin/configuration-registry.js';
+import type { WindowHandler } from './system/window/window-handler.js';
 import { isLinux, isMac, stoppedExtensions } from './util.js';
 
 const openDevTools = new OpenDevTools();
+let navigationItemsMenuBuilder: NavigationItemsMenuBuilder;
 
 async function createWindow(): Promise<BrowserWindow> {
   const INITIAL_APP_WIDTH = 1050;
@@ -70,18 +73,20 @@ async function createWindow(): Promise<BrowserWindow> {
   }
 
   const browserWindow = new BrowserWindow(browserWindowConstructorOptions);
+
   const { getCursorScreenPoint, getDisplayNearestPoint } = screen;
   const workArea = getDisplayNearestPoint(getCursorScreenPoint()).workArea;
 
   const x = Math.round(workArea.width / 2 - INITIAL_APP_WIDTH / 2 + workArea.x);
   const y = Math.round(workArea.height / 2 - INITIAL_APP_HEIGHT / 2);
 
-  browserWindow.setBounds({
+  const initialBounds: Rectangle = {
     x: x,
     y: y,
-    width: browserWindowConstructorOptions.width,
-    height: browserWindowConstructorOptions.height,
-  });
+    width: INITIAL_APP_WIDTH,
+    height: INITIAL_APP_HEIGHT,
+  };
+  browserWindow.setBounds(initialBounds);
 
   /**
    * If you install `show: true` then it can cause issues when trying to close the window.
@@ -104,8 +109,30 @@ async function createWindow(): Promise<BrowserWindow> {
   ipcMain.on('configuration-registry', (_, data) => {
     configurationRegistry = data;
 
+    navigationItemsMenuBuilder = new NavigationItemsMenuBuilder(configurationRegistry);
+
     // open dev tools (if required)
     openDevTools.open(browserWindow, configurationRegistry);
+  });
+
+  let windowHandler: WindowHandler | undefined;
+  ipcMain.on('window-handler', (_, windowHandlerParam) => {
+    // try to restore the window position and size
+    windowHandler = windowHandlerParam;
+    windowHandler?.restore(initialBounds);
+  });
+
+  browserWindow.on('resize', () => {
+    windowHandler?.savePositionAndSize();
+  });
+
+  browserWindow.on('move', () => {
+    windowHandler?.savePositionAndSize();
+  });
+
+  // receive the navigation items
+  ipcMain.handle('navigation:sendNavigationItems', (_, data) => {
+    navigationItemsMenuBuilder?.receiveNavigationItems(data);
   });
 
   // receive the message because an update is in progress and we need to quit the app
@@ -128,8 +155,8 @@ async function createWindow(): Promise<BrowserWindow> {
       exitonclose = closeBehaviorConfiguration.get<boolean>('ExitOnClose') === true;
     }
 
+    e.preventDefault();
     if (!exitonclose) {
-      e.preventDefault();
       browserWindow.hide();
       if (isMac()) {
         app.dock.hide();
@@ -161,65 +188,18 @@ async function createWindow(): Promise<BrowserWindow> {
     showInspectElement: import.meta.env.DEV,
     showServices: false,
     prepend: (_defaultActions, parameters) => {
-      // In development mode, show the "Open DevTools of Extension and Webviews" menu item
-      if (import.meta.env.DEV) {
-        let extensionId = '';
-        if (parameters?.linkURL?.includes('/contribs')) {
-          extensionId = parameters.linkURL.split('/contribs/')[1];
-          return [
-            {
-              label: `Open DevTools of ${decodeURI(extensionId)} Extension`,
-              // make it visible when link contains contribs and we're inside the extension
-              visible:
-                parameters.linkURL.includes('/contribs/') && parameters.pageURL.includes(`/contribs/${extensionId}`),
-              click: (): void => {
-                browserWindow.webContents.send('dev-tools:open-extension', extensionId.replaceAll('%20', '-'));
-              },
-            },
-          ];
-        } else if (parameters?.linkURL?.includes('/webviews/')) {
-          const webviewId = parameters.linkURL.split('/webviews/')[1];
-          return [
-            {
-              label: `Open DevTools of the webview`,
-              visible:
-                parameters.linkURL.includes('/webviews/') && parameters.pageURL.includes(`/webviews/${webviewId}`),
-              click: (): void => {
-                browserWindow.webContents.send('dev-tools:open-webview', webviewId);
-              },
-            },
-          ];
-        } else {
-          return [];
-        }
-      } else {
-        return [];
-      }
+      return buildDevelopmentMenu(parameters, browserWindow, import.meta.env.DEV);
+    },
+    append: (_defaultActions, parameters) => {
+      return navigationItemsMenuBuilder?.buildNavigationMenu(parameters) ?? [];
+    },
+    onClose: () => {
+      browserWindow.webContents.send('context-menu:visible', false);
+    },
+    onShow: () => {
+      browserWindow.webContents.send('context-menu:visible', true);
     },
   });
-
-  // Add help/about menu entry
-  const menu = Menu.getApplicationMenu(); // get default menu
-  if (menu) {
-    // build a new menu based on default one but adding about entry in the help menu
-    const newmenu = Menu.buildFromTemplate(
-      menu.items.map(i => {
-        // add the About entry only in the help menu
-        if (i.role === 'help' && i.submenu) {
-          const aboutMenuSubItem = aboutMenuItem({});
-          aboutMenuSubItem.label = 'About';
-
-          // create new submenu
-          // also add a separator before the About entry
-          const newSubMenu = Menu.buildFromTemplate([...i.submenu.items, { type: 'separator' }, aboutMenuSubItem]);
-          return Object.assign({}, i, { submenu: newSubMenu });
-        }
-        return i;
-      }),
-    );
-
-    Menu.setApplicationMenu(newmenu);
-  }
 
   /**
    * URL for main window.

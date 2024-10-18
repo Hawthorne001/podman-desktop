@@ -23,8 +23,8 @@
 import '@testing-library/jest-dom/vitest';
 
 import { render, screen } from '@testing-library/svelte';
+import { Terminal } from '@xterm/xterm';
 import { beforeAll, expect, test, vi } from 'vitest';
-import { Terminal } from 'xterm';
 
 import type { ProviderContainerConnectionInfo } from '/@api/provider-info';
 
@@ -37,6 +37,7 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 
 const containerConnection: ProviderContainerConnectionInfo = {
   name: 'connection',
+  displayName: 'connection',
   endpoint: {
     socketPath: 'socket',
   },

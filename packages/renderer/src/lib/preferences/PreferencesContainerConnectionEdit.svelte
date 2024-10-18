@@ -29,7 +29,7 @@ let providersUnsubscribe: Unsubscriber;
 onMount(async () => {
   providersUnsubscribe = providerInfos.subscribe(providerInfosValue => {
     const providers = providerInfosValue;
-    const connectionName = Buffer.from(name || '', 'base64').toString();
+    const connectionName = Buffer.from(name ?? '', 'base64').toString();
     providerInfo = providers.filter(provider => provider.internalId === providerInternalId)[0];
     connectionInfo = providerInfo.containerConnections.filter(connection => connection.name === connectionName)[0];
   });
@@ -47,23 +47,32 @@ async function editConnection(
   params: { [key: string]: any },
   key: symbol,
   keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-  tokenId?: number,
+  tokenId: number | undefined,
+  taskId: number | undefined,
 ): Promise<void> {
-  await window.editProviderConnectionLifecycle(internalProviderId, connectionInfo, params, key, keyLogger, tokenId);
+  await window.editProviderConnectionLifecycle(
+    internalProviderId,
+    connectionInfo,
+    params,
+    key,
+    keyLogger,
+    tokenId,
+    taskId,
+  );
 }
 </script>
 
 {#if providerInfo && connectionInfo}
-  <DetailsPage title="{connectionInfo.name}">
-    <svelte:fragment slot="content">
+  <DetailsPage title={connectionInfo.name}>
+    <div slot="content" class="text-[var(--pd-content-text)]">
       <PreferencesConnectionCreationRendering
-        providerInfo="{providerInfo}"
-        connectionInfo="{connectionInfo}"
-        properties="{properties}"
-        propertyScope="{scope}"
-        callback="{editConnection}" />
-    </svelte:fragment>
-    <IconImage slot="icon" image="{providerInfo?.images?.icon}" alt="{providerInfo?.name}" class="max-h-10" />
+        providerInfo={providerInfo}
+        connectionInfo={connectionInfo}
+        properties={properties}
+        propertyScope={scope}
+        callback={editConnection} />
+    </div>
+    <IconImage slot="icon" image={providerInfo?.images?.icon} alt={providerInfo?.name} class="max-h-10" />
     <svelte:fragment slot="subtitle">
       {#if connectionInfo.status === 'started'}
         <WarningMessage

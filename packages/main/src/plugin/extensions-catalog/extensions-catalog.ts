@@ -27,6 +27,7 @@ import type {
 } from '/@/plugin/extensions-catalog/extensions-catalog-api.js';
 import type { Proxy } from '/@/plugin/proxy.js';
 
+import type { ApiSenderType } from '../api.js';
 import type { ConfigurationRegistry, IConfigurationNode } from '../configuration-registry.js';
 import { ExtensionsCatalogSettings } from './extensions-catalog-settings.js';
 
@@ -44,6 +45,7 @@ export class ExtensionsCatalog {
     private certificates: Certificates,
     private proxy: Proxy,
     private configurationRegistry: ConfigurationRegistry,
+    private apiSender: ApiSenderType,
   ) {}
 
   init(): void {
@@ -65,13 +67,9 @@ export class ExtensionsCatalog {
     this.configurationRegistry.registerConfigurations([recommendationConfiguration]);
   }
 
-  // internal method, not exposed
-  protected async getCatalogJson(): Promise<InternalCatalogJSON | undefined> {
-    // return the cache version if cache is not reached and we have a cached version
-    if (this.lastFetchTime + ExtensionsCatalog.CACHE_TIMEOUT > Date.now() && this.cachedCatalog) {
-      return this.cachedCatalog;
-    }
-
+  // can be called to force the refresh of the catalog
+  // or it is called automatically when asking the catalog
+  public async refreshCatalog(): Promise<void> {
     // get the URL from the configuration
     const catalogUrl = this.configurationRegistry
       .getConfiguration(ExtensionsCatalogSettings.SectionName)
@@ -86,16 +84,31 @@ export class ExtensionsCatalog {
       this.cachedCatalog = JSON.parse(response.body) as InternalCatalogJSON;
       const endTime = performance.now();
       console.log(`Fetched ${catalogUrl} in ${endTime - startTime}ms`);
+      this.apiSender.send('refresh-catalog');
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (requestErr: any) {
       // unable to fetch the extensions
       // extract only the error message
       if (requestErr.message) {
-        console.error('Unable to fetch the available extensions: ' + requestErr.message);
+        throw new Error(`Unable to fetch the available extensions: ${String(requestErr.message)}`);
       } else {
-        console.error('Unable to fetch the available extensions', requestErr.message);
+        throw new Error(`Unable to fetch the available extensions: ${String(requestErr)}`);
       }
+    }
+  }
+
+  // internal method, not exposed
+  protected async getCatalogJson(): Promise<InternalCatalogJSON | undefined> {
+    // return the cache version if cache is not reached and we have a cached version
+    if (this.lastFetchTime + ExtensionsCatalog.CACHE_TIMEOUT > Date.now() && this.cachedCatalog) {
+      return this.cachedCatalog;
+    }
+
+    try {
+      await this.refreshCatalog();
+    } catch (error: unknown) {
+      console.error(String(error));
     }
     // update the last fetch time
     this.lastFetchTime = Date.now();
@@ -114,6 +127,7 @@ export class ExtensionsCatalog {
           publisherName: extension.publisher.publisherName,
           publisherDisplayName: extension.publisher.displayName,
           categories: extension.categories,
+          keywords: extension.keywords,
           unlisted: extension.unlisted ?? false,
           extensionName: extension.extensionName,
           shortDescription: extension.shortDescription,
@@ -121,6 +135,7 @@ export class ExtensionsCatalog {
           versions: extension.versions.map(version => {
             return {
               version: version.version,
+              podmanDesktopVersion: version.podmanDesktopVersion,
               preview: version.preview,
               ociUri: version.ociUri,
               files: version.files,
@@ -142,7 +157,7 @@ export class ExtensionsCatalog {
       // we have a list of extensions
       catalogJSON.extensions.forEach(extension => {
         const notPreviewVersions = extension.versions.filter(v => v.preview !== true);
-        if (notPreviewVersions.length > 0) {
+        if (notPreviewVersions.length > 0 && notPreviewVersions[0]) {
           // take the first version
           fetchableExtensions.push({
             extensionId: `${extension.publisher.publisherName}.${extension.extensionName}`,
@@ -211,6 +226,10 @@ export class ExtensionsCatalog {
             maxFreeSockets: 256,
             scheduling: 'lifo',
             proxy: httpsProxyUrl,
+            ca: this.certificates.getAllCertificates(),
+            proxyRequestOptions: {
+              ca: this.certificates.getAllCertificates(),
+            },
           });
         } catch (error) {
           throw new Error(`Failed to create https proxy agent from ${httpsProxyUrl}: ${error}`);
@@ -232,6 +251,7 @@ interface InternalCatalogExtensionJSON {
   extensionName: string;
   displayName: string;
   categories: string[];
+  keywords: string[];
   unlisted?: boolean;
   shortDescription: string;
   versions: InternalCatalogExtensionVersionJSON[];
@@ -239,6 +259,7 @@ interface InternalCatalogExtensionJSON {
 
 interface InternalCatalogExtensionVersionJSON {
   version: string;
+  podmanDesktopVersion?: string;
   ociUri: string;
   preview: boolean;
   lastUpdated: string;

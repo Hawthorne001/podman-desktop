@@ -16,10 +16,8 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
-import { afterEach } from 'node:test';
-
 import type { CancellationToken, ImageChecks, ImageInfo, ProviderResult } from '@podman-desktop/api';
-import { beforeEach, expect, suite, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, suite, test, vi } from 'vitest';
 
 import type { ImageCheckerExtensionInfo } from '/@api/image-checker-info.js';
 
@@ -65,11 +63,11 @@ suite('image checker module', () => {
       const providers = imageChecker.getImageCheckerProviders();
       expect(providers.length).toBe(2);
 
-      expect(providers[0].id).equals(`${extensionInfo.id}-0`);
-      expect(providers[0].label).equals('Provider label');
+      expect(providers[0]?.id).equals(`${extensionInfo.id}-0`);
+      expect(providers[0]?.label).equals('Provider label');
 
-      expect(providers[1].id).equals(`${extensionInfo.id}-1`);
-      expect(providers[1].label).equals(extensionInfo.label);
+      expect(providers[1]?.id).equals(`${extensionInfo.id}-1`);
+      expect(providers[1]?.label).equals(extensionInfo.label);
     });
 
     test('Image checker sends "image-checker-provider-update" event when new provider is added', () => {
@@ -150,11 +148,15 @@ suite('image checker module', () => {
         Containers: 1,
         Digest: 'sha256:id',
       };
-      const result = await imageChecker.check(providers[0].id, imageInfo);
+      const providerGet = providers[0];
+      if (!providerGet) {
+        throw new Error('Provider not found');
+      }
+      const result = await imageChecker.check(providerGet.id, imageInfo);
       expect(result).toBeDefined();
       expect(result!.checks.length).toBe(1);
-      expect(result!.checks[0].name).toBe('check1');
-      expect(result!.checks[0].status).toBe('failed');
+      expect(result!.checks[0]?.name).toBe('check1');
+      expect(result!.checks[0]?.status).toBe('failed');
     });
 
     test('check method throws an error if provider is unknown', async () => {

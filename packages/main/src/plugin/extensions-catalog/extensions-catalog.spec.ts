@@ -22,6 +22,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import type { ConfigurationRegistry } from '/@/plugin/configuration-registry.js';
 
+import type { ApiSenderType } from '../api.js';
 import type { Certificates } from '../certificates.js';
 import { Emitter } from '../events/emitter.js';
 import type { Proxy } from '../proxy.js';
@@ -32,6 +33,11 @@ let extensionsCatalog: ExtensionsCatalog;
 const fooAssetIcon = {
   assetType: 'icon',
   data: 'fooIcon',
+};
+
+const apiSender: ApiSenderType = {
+  send: vi.fn(),
+  receive: vi.fn(),
 };
 
 // unlisted field is not present (assuming it should be listed then)
@@ -122,7 +128,7 @@ const configurationRegistry: ConfigurationRegistry = {
 
 const originalConsoleError = console.error;
 beforeEach(() => {
-  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry);
+  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry, apiSender);
   vi.resetAllMocks();
   console.error = vi.fn();
   vi.mocked(configurationRegistry.getConfiguration).mockReturnValue({
@@ -150,8 +156,8 @@ test('should fetch fetchable extensions', async () => {
 
   // check data
   const extension = fetchableExtensions[0];
-  expect(extension.extensionId).toBe('foo.fooName');
-  expect(extension.link).toBe('oci-registry.foo/foo/bar');
+  expect(extension?.extensionId).toBe('foo.fooName');
+  expect(extension?.link).toBe('oci-registry.foo/foo/bar');
   // no error
   expect(console.error).not.toBeCalled();
 });
@@ -193,7 +199,7 @@ test('check getHttpOptions with Proxy', async () => {
     httpsProxy: 'http://localhost',
     noProxy: 'localhost',
   });
-  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry);
+  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry, apiSender);
 
   const options = extensionsCatalog.getHttpOptions();
   expect(options).toBeDefined();
@@ -226,18 +232,19 @@ test('should get all extensions', async () => {
 
   // check data
   const extension = allExtensions[0];
-  expect(extension.id).toBe('foo.fooName');
-  expect(extension.publisherName).toBe('foo');
-  expect(extension.displayName).toBe(fakePublishedExtension1.displayName);
-  expect(extension.categories).toStrictEqual(['Kubernetes']);
-  expect(extension.publisherDisplayName).toBe('Foo publisher display name');
-  expect(extension.shortDescription).toBe('Foo extension short description');
+  expect(extension?.id).toBe('foo.fooName');
+  expect(extension?.publisherName).toBe('foo');
+  expect(extension?.displayName).toBe(fakePublishedExtension1.displayName);
+  expect(extension?.categories).toStrictEqual(['Kubernetes']);
+  expect(extension?.publisherDisplayName).toBe('Foo publisher display name');
+  expect(extension?.shortDescription).toBe('Foo extension short description');
 
-  expect(extension.versions[0]).toStrictEqual({
+  expect(extension?.versions[0]).toStrictEqual({
     ociUri: 'oci-registry.foo/foo/bar',
     lastUpdated: expect.any(Date),
     preview: false,
     version: '1.0.0',
+    podmanDesktopVersion: undefined,
     files: [fooAssetIcon],
   });
   // no error
@@ -298,8 +305,8 @@ test('should fetch alternate link', async () => {
 
   // check data
   const extension = fetchableExtensions[0];
-  expect(extension.extensionId).toBe('foo.fooName');
-  expect(extension.link).toBe('oci-registry.foo/foo/bar');
+  expect(extension?.extensionId).toBe('foo.fooName');
+  expect(extension?.link).toBe('oci-registry.foo/foo/bar');
   // no error
   expect(console.error).not.toBeCalled();
 });
@@ -317,7 +324,7 @@ test('Should use proxy object if proxySettings is undefined', () => {
     httpsProxy: 'https://localhost',
     noProxy: 'localhost',
   });
-  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry);
+  extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry, apiSender);
   const options = extensionsCatalog.getHttpOptions();
 
   expect(options).toBeDefined();

@@ -24,12 +24,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { Registry } from '@podman-desktop/api';
+import * as fzstd from 'fzstd';
 import nock from 'nock';
 import * as nodeTar from 'tar';
-import { beforeAll, beforeEach, describe, expect, expectTypeOf, test, vi, vitest } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
 
 import * as imageRegistryConfigJson from '../../tests/resources/data/plugin/image-registry-config.json';
 import * as imageRegistryManifestJson from '../../tests/resources/data/plugin/image-registry-manifest-index.json';
+import * as imageRegistryManifestZstdJson from '../../tests/resources/data/plugin/image-registry-manifest-index.zstd.json';
 import * as imageRegistryManifestMultiArchJson from '../../tests/resources/data/plugin/image-registry-manifest-multi-arch-index.json';
 import type { ApiSenderType } from './api.js';
 import type { Certificates } from './certificates.js';
@@ -40,27 +42,50 @@ import type { Disposable } from './types/disposable.js';
 
 let imageRegistry: ImageRegistry;
 
+const pxoxyIsEnabledMock = vi.fn();
+const proxyGetProxyMock = vi.fn();
+
+const telemetry: Telemetry = {
+  track(_event: EventType, _eventProperties?: any): void {},
+} as Telemetry;
+const certificates: Certificates = {
+  init: vi.fn(),
+  getAllCertificates: vi.fn(),
+} as unknown as Certificates;
+const proxy: Proxy = {
+  onDidStateChange: vi.fn(),
+  onDidUpdateProxy: vi.fn(),
+  isEnabled: pxoxyIsEnabledMock,
+  proxy: proxyGetProxyMock,
+} as unknown as Proxy;
+Object.defineProperty(proxy, 'proxy', {
+  get: proxyGetProxyMock,
+});
+const apiSender: ApiSenderType = {
+  send(_channel: string, _data?: any): void {},
+} as ApiSenderType;
+
 beforeAll(async () => {
-  const telemetry: Telemetry = {
-    track(event: EventType, eventProperties?: any): void {},
-  } as Telemetry;
-  const certificates: Certificates = {
-    init: vi.fn(),
-    getAllCertificates: vi.fn(),
-  } as unknown as Certificates;
-  const proxy: Proxy = {
-    onDidStateChange: vi.fn(),
-    onDidUpdateProxy: vi.fn(),
-    isEnabled: vi.fn(),
-  } as unknown as Proxy;
-  const apiSender: ApiSenderType = {
-    send(channel: string, data?: any): void {},
-  } as ApiSenderType;
   imageRegistry = new ImageRegistry(apiSender, telemetry, certificates, proxy);
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+vi.mock('fzstd', () => {
+  return {
+    decompress: vi.fn(),
+  };
+});
+
+vi.mock('tar', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const tarActual = await vi.importActual<typeof import('tar')>('tar');
+
+  return {
+    ...tarActual,
+  };
 });
 
 test('Should extract auth registry with gitlab', async () => {
@@ -425,6 +450,79 @@ test('expect downloadAndExtractImage works', async () => {
   }
 });
 
+test('expect downloadAndExtractImage works with zstd', async () => {
+  // need to mock the http request
+  const spyGetAuthInfo = vi.spyOn(imageRegistry, 'getAuthInfo');
+  spyGetAuthInfo.mockResolvedValue({ authUrl: 'http://foobar', scheme: 'bearer' });
+
+  // need to mock the http request
+  const spyGetToken = vi.spyOn(imageRegistry, 'getToken');
+  spyGetToken.mockResolvedValue('12345');
+
+  // use nock to mock http responses
+
+  // create a tar file with a package.json file inside
+  const tmpTarFolder = path.resolve(os.tmpdir(), 'tar-test-folder');
+
+  const tmpTar1Folder = path.resolve(tmpTarFolder, 'tar1');
+  const tmpZstFile = path.resolve(tmpTar1Folder, '1.tar.zst');
+  await fs.promises.mkdir(tmpTar1Folder, { recursive: true });
+
+  // write a hello world as zst content
+  fs.writeFileSync(tmpZstFile, 'Hello World');
+
+  const readTarZstFile = (): Buffer => {
+    return fs.readFileSync(tmpZstFile);
+  };
+
+  // multi-arch index
+  nock('https://my-podman-desktop-fake-registry.io')
+    .get('/v2/my/extension/manifests/latest')
+    .reply(200, imageRegistryManifestMultiArchJson);
+
+  // image index
+  nock('https://my-podman-desktop-fake-registry.io')
+    .get('/v2/my/extension/manifests/sha256:791352c5f8969387d576cae0586f24a12e716db584c117a15a6138812ddbaef0')
+    .reply(200, imageRegistryManifestZstdJson);
+
+  nock('https://my-podman-desktop-fake-registry.io')
+    .get('/v2/my/extension/blobs/sha256:ec4d84bbb887a9dba10a4551252dde152bbb42e3b02e501b44218c9c5425eac4')
+    .reply(200, readTarZstFile(), {
+      'content-type': 'application/octet-stream',
+      'content-disposition': 'attachment; filename=reply_file_2.tar.zst',
+    });
+
+  nock('https://my-podman-desktop-fake-registry.io')
+    .get('/v2/my/extension/blobs/sha256:dc0c1d0e36ea3e0b94af099c9b96012743ae22e1797eaff3308895335513d454')
+    .reply(200, readTarZstFile(), {
+      'content-type': 'application/octet-stream',
+      'content-disposition': 'attachment; filename=reply_file_2.tar.zst',
+    });
+
+  const destFolder = path.resolve(os.tmpdir(), 'test-folder');
+  const logFn = vi.fn();
+
+  vi.mocked(fzstd.decompress).mockReturnValue(Buffer.from('hello'));
+  const spyExtract = vi.spyOn(nodeTar, 'extract').mockResolvedValue();
+
+  try {
+    await imageRegistry.downloadAndExtractImage('my-podman-desktop-fake-registry.io/my/extension', destFolder, logFn);
+
+    // check that the folder exists and files are there
+    const existFolder = fs.existsSync(destFolder);
+    expect(existFolder).toBeTruthy();
+
+    // expect some traces in the logger
+    expect(logFn).toHaveBeenCalled();
+
+    expect(spyExtract).toHaveBeenCalledWith({ cwd: destFolder, file: expect.stringContaining('.tar') });
+  } finally {
+    // remove the folders
+    await fs.promises.rm(tmpTarFolder, { recursive: true });
+    await fs.promises.rm(destFolder, { recursive: true });
+  }
+});
+
 describe('expect checkCredentials', async () => {
   test('expect checkCredentials works', async () => {
     const spyGetAuthInfo = vi.spyOn(imageRegistry, 'getAuthInfo');
@@ -528,7 +626,7 @@ describe('expect checkCredentials', async () => {
   });
 });
 
-test('getBestManifest returns the expected manifest', () => {
+test('findBestManifest returns the expected manifest', () => {
   const manifests = {
     'linux-amd64': {
       platform: {
@@ -569,14 +667,14 @@ test('getBestManifest returns the expected manifest', () => {
 
   // Exact matches
   expect(
-    imageRegistry.getBestManifest(
+    imageRegistry.findBestManifest(
       [manifests['linux-amd64'], manifests['linux-arm64'], manifests['windows-amd64'], manifests['windows-arm64']],
       'amd64',
       'linux',
     ),
   ).toHaveProperty('name', 'linux-amd64');
   expect(
-    imageRegistry.getBestManifest(
+    imageRegistry.findBestManifest(
       [manifests['linux-amd64'], manifests['linux-arm64'], manifests['windows-amd64'], manifests['windows-arm64']],
       'amd64',
       'windows',
@@ -585,35 +683,35 @@ test('getBestManifest returns the expected manifest', () => {
 
   // Linux by default
   expect(
-    imageRegistry.getBestManifest(
+    imageRegistry.findBestManifest(
       [manifests['linux-amd64'], manifests['linux-arm64'], manifests['windows-amd64'], manifests['windows-arm64']],
       'amd64',
       'darwin',
     ),
   ).toHaveProperty('name', 'linux-amd64');
   expect(
-    imageRegistry.getBestManifest([manifests['windows-amd64'], manifests['linux-amd64']], 'amd64', 'darwin'),
+    imageRegistry.findBestManifest([manifests['windows-amd64'], manifests['linux-amd64']], 'amd64', 'darwin'),
   ).toHaveProperty('name', 'linux-amd64');
 
   // Only one os by default
   expect(
-    imageRegistry.getBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'amd64', 'darwin'),
+    imageRegistry.findBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'amd64', 'darwin'),
   ).toBeUndefined();
   expect(
-    imageRegistry.getBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'arm64', 'darwin'),
+    imageRegistry.findBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'arm64', 'darwin'),
   ).toBeUndefined();
   expect(
-    imageRegistry.getBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'unknown-arch', 'darwin'),
+    imageRegistry.findBestManifest([manifests['windows-arm64'], manifests['windows-amd64']], 'unknown-arch', 'darwin'),
   ).toBeUndefined();
 
   // amd64 arch by default, linux os by default
   expect(
-    imageRegistry.getBestManifest([manifests['windows-amd64'], manifests['linux-amd64']], 'arm64', 'darwin'),
+    imageRegistry.findBestManifest([manifests['windows-amd64'], manifests['linux-amd64']], 'arm64', 'darwin'),
   ).toHaveProperty('name', 'linux-amd64');
 
   // no default OS found
   expect(
-    imageRegistry.getBestManifest([manifests['windows-amd64'], manifests['darwin-amd64']], 'amd64', 'linux'),
+    imageRegistry.findBestManifest([manifests['windows-amd64'], manifests['darwin-amd64']], 'amd64', 'linux'),
   ).toBeUndefined();
 });
 
@@ -632,9 +730,9 @@ test('getManifestFromUrl returns the expected manifest with mediaType', async ()
     .get('/v2/foo/bar/manifests/1234')
     .reply(200, JSON.stringify({ endManifest: true }));
 
-  // mock getBestManifest
-  const spyGetBestManifest = vi.spyOn(imageRegistry, 'getBestManifest');
-  spyGetBestManifest.mockReturnValue({
+  // mock findBestManifest
+  const spyFindBestManifest = vi.spyOn(imageRegistry, 'findBestManifest');
+  spyFindBestManifest.mockReturnValue({
     digest: 1234,
   });
 
@@ -650,7 +748,7 @@ test('getManifestFromUrl returns the expected manifest with mediaType', async ()
 
   expect(manifest).toBeDefined();
   expect(manifest).toHaveProperty('endManifest', true);
-  expect(spyGetBestManifest).toHaveBeenCalled();
+  expect(spyFindBestManifest).toHaveBeenCalled();
 });
 
 test('getManifestFromUrl returns the expected manifest without mediaType but with manifests', async () => {
@@ -671,9 +769,9 @@ test('getManifestFromUrl returns the expected manifest without mediaType but wit
     .get('/v2/foo/bar/manifests/1234')
     .reply(200, JSON.stringify({ endManifest: true }));
 
-  // mock getBestManifest
-  const spyGetBestManifest = vi.spyOn(imageRegistry, 'getBestManifest');
-  spyGetBestManifest.mockReturnValue({
+  // mock findBestManifest
+  const spyFindBestManifest = vi.spyOn(imageRegistry, 'findBestManifest');
+  spyFindBestManifest.mockReturnValue({
     digest: 1234,
   });
 
@@ -689,7 +787,7 @@ test('getManifestFromUrl returns the expected manifest without mediaType but wit
 
   expect(manifest).toBeDefined();
   expect(manifest).toHaveProperty('endManifest', true);
-  expect(spyGetBestManifest).toHaveBeenCalled();
+  expect(spyFindBestManifest).toHaveBeenCalled();
 });
 
 test('getManifestFromUrl returns the expected manifest with docker manifest v2', async () => {
@@ -716,9 +814,9 @@ test('getManifestFromUrl returns the expected manifest with docker manifest v2',
     .get('/v2/foo/bar/manifests/1234')
     .reply(200, JSON.stringify({ endManifest: true }));
 
-  // mock getBestManifest
-  const spyGetBestManifest = vi.spyOn(imageRegistry, 'getBestManifest');
-  spyGetBestManifest.mockReturnValue({
+  // mock findBestManifest
+  const spyFindBestManifest = vi.spyOn(imageRegistry, 'findBestManifest');
+  spyFindBestManifest.mockReturnValue({
     digest: 1234,
   });
 
@@ -734,9 +832,9 @@ test('getManifestFromUrl returns the expected manifest with docker manifest v2',
 
   expect(manifest).toBeDefined();
   expect(manifest).toHaveProperty('endManifest', true);
-  expect(spyGetBestManifest).toHaveBeenCalled();
+  expect(spyFindBestManifest).toHaveBeenCalled();
   // check first item of the call and first element of the array
-  expect(spyGetBestManifest.mock.calls[0][0][0]).contains({ name: 'docker-manifest' });
+  expect(spyFindBestManifest.mock.calls[0]?.[0][0]).contains({ name: 'docker-manifest' });
 });
 
 test('getAuthconfigForServer returns the expected authconfig', async () => {
@@ -754,19 +852,19 @@ test('getAuthconfigForServer returns the expected authconfig', async () => {
   expect(config?.serveraddress).toBe('my-podman-desktop-fake-registry.io');
 });
 
-test('getAuthconfigForServer returns the expected authconfig', async () => {
+test('getAuthconfigForServer returns docker.io authconfig when server is index.docker.io', async () => {
   imageRegistry.registerRegistry({
-    serverUrl: 'my-podman-desktop-fake-registry.io',
+    serverUrl: 'docker.io',
     username: 'foo',
     secret: 'my-secret',
     source: 'podman-desktop',
   });
-  const config = imageRegistry.getAuthconfigForServer('my-podman-desktop-fake-registry.io');
+  const config = imageRegistry.getAuthconfigForServer('index.docker.io');
 
   expect(config).toBeDefined();
   expect(config?.username).toBe('foo');
   expect(config?.password).toBe('my-secret');
-  expect(config?.serveraddress).toBe('my-podman-desktop-fake-registry.io');
+  expect(config?.serveraddress).toBe('https://index.docker.io/v2/');
 });
 
 test('getToken with registry auth', async () => {
@@ -825,4 +923,128 @@ test('getToken without registry auth', async () => {
 
   expect(token).toBeDefined();
   expect(token).toBe('12345');
+});
+
+test('getOptions uses proxy settings', () => {
+  pxoxyIsEnabledMock.mockReturnValue(true);
+  proxyGetProxyMock.mockReturnValue({
+    httpProxy: 'http://192.168.1.1:3128',
+    httpsProxy: 'http://192.168.1.1:3128',
+    noProxy: '',
+  });
+  imageRegistry = new ImageRegistry(apiSender, telemetry, certificates, proxy);
+  const options = imageRegistry.getOptions();
+  expect(options.agent).toBeDefined();
+  expect(options.agent!.http).toBeDefined();
+  expect(options.agent!.https).toBeDefined();
+});
+
+test('searchImages with proxy', async () => {
+  pxoxyIsEnabledMock.mockReturnValue(true);
+  proxyGetProxyMock.mockReturnValue({
+    httpProxy: 'http://myproxy.com:3128',
+    httpsProxy: 'http://myproxy.com:3128',
+    noProxy: '',
+  });
+  imageRegistry = new ImageRegistry(apiSender, telemetry, certificates, proxy);
+  nock('http://myproxy.com:3128')
+    .intercept(r => r.includes('index.docker.io:443'), 'CONNECT')
+    .replyWithError('a proxy error');
+  await expect(imageRegistry.searchImages({ query: 'anything' })).rejects.toThrow('a proxy error');
+});
+
+test('searchImages without registry', async () => {
+  const list = [
+    {
+      name: 'image1',
+      description: 'desc',
+    },
+  ];
+  nock('https://index.docker.io').get('/v1/search?q=http&n=10').reply(200, {
+    results: list,
+  });
+  const result = await imageRegistry.searchImages({ query: 'http', limit: 10 });
+  expect(result).toEqual(list);
+});
+
+test('searchImages without limit', async () => {
+  const list = [
+    {
+      name: 'image1',
+      description: 'desc',
+    },
+  ];
+  nock('https://index.docker.io').get('/v1/search?q=http&n=25').reply(200, {
+    results: list,
+  });
+  const result = await imageRegistry.searchImages({ query: 'http' });
+  expect(result).toEqual(list);
+});
+
+test('searchImages with docker.io registry', async () => {
+  const list = [
+    {
+      name: 'image1',
+      description: 'desc',
+    },
+  ];
+  nock('https://index.docker.io').get('/v1/search?q=http&n=10').reply(200, {
+    results: list,
+  });
+  const result = await imageRegistry.searchImages({ registry: 'docker.io', query: 'http', limit: 10 });
+  expect(result).toEqual(list);
+});
+
+test('searchImages without https', async () => {
+  const list = [
+    {
+      name: 'image1',
+      description: 'desc',
+    },
+  ];
+  nock('https://quay.io').get('/v1/search?q=http&n=10').reply(200, {
+    results: list,
+  });
+  const result = await imageRegistry.searchImages({ registry: 'quay.io', query: 'http', limit: 10 });
+  expect(result).toEqual(list);
+});
+
+test('searchImages with https', async () => {
+  const list = [
+    {
+      name: 'image1',
+      description: 'desc',
+    },
+  ];
+  nock('https://quay.io').get('/v1/search?q=http&n=10').reply(200, {
+    results: list,
+  });
+  const result = await imageRegistry.searchImages({ registry: 'https://quay.io', query: 'http', limit: 10 });
+  expect(result).toEqual(list);
+});
+
+test('listImageTags', async () => {
+  vi.spyOn(imageRegistry, 'extractImageDataFromImageName').mockReturnValue({
+    name: 'a-name',
+    tag: 'a-tag',
+    registry: 'a-registry',
+    registryURL: 'https://registry.example.com/v2',
+  });
+  vi.spyOn(imageRegistry, 'getAuthInfo').mockResolvedValue({
+    authUrl: 'https://auth.example.com',
+    scheme: 'bearer',
+  });
+  vi.spyOn(imageRegistry, 'getOptions').mockReturnValue({});
+  vi.spyOn(imageRegistry, 'getToken').mockResolvedValue('a.token');
+  nock('https://registry.example.com', {
+    reqheaders: {
+      Authorization: 'Bearer a.token',
+    },
+  })
+    .get('/v2/a-name/tags/list')
+    .reply(200, {
+      tags: ['1', '2', '3'],
+    });
+  const result = await imageRegistry.listImageTags({ image: 'an-image' });
+  expect(result).toEqual(['1', '2', '3']);
 });

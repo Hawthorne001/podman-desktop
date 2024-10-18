@@ -53,7 +53,7 @@ onMount(() => {
       const enablement = normalizeOnboardingWhenClause(matchingOnBoarding.enablement, extension.id);
       const whenDeserialized = ContextKeyExpr.deserialize(enablement);
       const isEnabled = whenDeserialized?.evaluate($context);
-      return isEnabled || false;
+      return !!isEnabled;
     }
   });
 
@@ -82,9 +82,9 @@ function handleProperties() {
   title="Onboarding {extension.name}"
   type="primary"
   class="m-auto {!isOnboardingEnabled ? 'cursor-not-allowed' : ''}"
-  disabled="{!isOnboardingEnabled}"
-  on:click="{() => handleOnboarding()}">
-  <Fa size="1x" icon="{faGear}" />
+  disabled={!isOnboardingEnabled}
+  on:click={() => handleOnboarding()}>
+  <Fa size="1x" icon={faGear} />
 </Button>
 
 <Button
@@ -92,7 +92,7 @@ function handleProperties() {
   title="Edit properties of {extension.name} extension"
   type="secondary"
   class="m-auto {!hasAnyConfiguration ? 'cursor-not-allowed' : ''}"
-  disabled="{!hasAnyConfiguration}"
-  on:click="{() => handleProperties()}">
-  <Fa size="1x" icon="{faFilePen}" />
+  disabled={!hasAnyConfiguration}
+  on:click={() => handleProperties()}>
+  <Fa size="1x" icon={faFilePen} />
 </Button>

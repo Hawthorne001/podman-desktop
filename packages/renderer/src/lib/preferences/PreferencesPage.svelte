@@ -7,6 +7,7 @@ import type { IConfigurationPropertyRecordedSchema } from '../../../../main/src/
 import Route from '../../Route.svelte';
 import { configurationProperties } from '../../stores/configurationProperties';
 import Onboarding from '../onboarding/Onboarding.svelte';
+import PreferencesDockerCompatibilityRendering from './docker-compat/PreferencesDockerCompatibilityRendering.svelte';
 import PreferencesAuthenticationProvidersRendering from './PreferencesAuthenticationProvidersRendering.svelte';
 import PreferencesCliToolsRendering from './PreferencesCliToolsRendering.svelte';
 import PreferencesContainerConnectionRendering from './PreferencesContainerConnectionRendering.svelte';
@@ -41,25 +42,28 @@ onMount(async () => {
 <div class="flex flex-col h-full bg-[var(--pd-invert-content-bg)]">
   <Route path="/*" breadcrumb="Preferences">
     {#if defaultPrefPageId !== undefined}
-      <PreferencesRendering key="{defaultPrefPageId}" properties="{properties}" />
+      <PreferencesRendering key={defaultPrefPageId} properties={properties} />
     {:else}
       empty
     {/if}
   </Route>
   <Route path="/default/:key/*" breadcrumb="Preferences" let:meta>
-    <PreferencesRendering key="{meta.params.key}" properties="{properties}" />
+    <PreferencesRendering key={meta.params.key} properties={properties} />
   </Route>
   <Route path="/provider/:providerInternalId/*" breadcrumb="Resources" let:meta navigationHint="details">
-    <PreferencesProviderRendering providerInternalId="{meta.params.providerInternalId}" properties="{properties}" />
+    <PreferencesProviderRendering providerInternalId={meta.params.providerInternalId} properties={properties} />
   </Route>
   <Route path="/provider-task/:providerInternalId/:taskId/*" breadcrumb="Resources" let:meta>
     <PreferencesProviderRendering
-      providerInternalId="{meta.params.providerInternalId}"
-      properties="{properties}"
-      taskId="{+meta.params.taskId}" />
+      providerInternalId={meta.params.providerInternalId}
+      properties={properties}
+      taskId={+meta.params.taskId} />
   </Route>
   <Route path="/resources" breadcrumb="Resources" navigationHint="root">
     <PreferencesResourcesRendering />
+  </Route>
+  <Route path="/docker-compatibility" breadcrumb="Docker Compatibility">
+    <PreferencesDockerCompatibilityRendering />
   </Route>
   <Route path="/registries" breadcrumb="Registries">
     <PreferencesRegistriesEditing />
@@ -78,7 +82,7 @@ onMount(async () => {
   </Route>
 
   <Route path="/onboarding/:extensionId" breadcrumb="Extension Onboarding" let:meta navigationHint="details">
-    <Onboarding extensionIds="{[meta.params.extensionId]}" />
+    <Onboarding extensionIds={[meta.params.extensionId]} />
   </Route>
 
   <Route
@@ -87,10 +91,10 @@ onMount(async () => {
     let:meta
     navigationHint="details">
     <PreferencesContainerConnectionRendering
-      providerInternalId="{meta.params.provider}"
-      name="{meta.params.name}"
-      connection="{meta.params.connection}"
-      properties="{properties}" />
+      providerInternalId={meta.params.provider}
+      name={meta.params.name}
+      connection={meta.params.connection}
+      properties={properties} />
   </Route>
   <Route
     path="/container-connection/edit/:provider/:name/*"
@@ -98,9 +102,9 @@ onMount(async () => {
     let:meta
     navigationHint="details">
     <PreferencesContainerConnectionEdit
-      providerInternalId="{meta.params.provider}"
-      name="{meta.params.name}"
-      properties="{properties}" />
+      providerInternalId={meta.params.provider}
+      name={meta.params.name}
+      properties={properties} />
   </Route>
   <Route
     path="/kubernetes-connection/:provider/:apiUrlBase64/*"
@@ -108,8 +112,8 @@ onMount(async () => {
     let:meta
     navigationHint="details">
     <PreferencesKubernetesConnectionRendering
-      providerInternalId="{meta.params.provider}"
-      apiUrlBase64="{meta.params.apiUrlBase64}"
-      properties="{properties}" />
+      providerInternalId={meta.params.provider}
+      apiUrlBase64={meta.params.apiUrlBase64}
+      properties={properties} />
   </Route>
 </div>

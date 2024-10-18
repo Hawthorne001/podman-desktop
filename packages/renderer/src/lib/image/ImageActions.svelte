@@ -1,10 +1,11 @@
 <script lang="ts">
 import { faArrowUp, faDownload, faEdit, faLayerGroup, faPlay, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { createEventDispatcher, onDestroy, onMount } from 'svelte';
-import type { Unsubscriber } from 'svelte/motion';
+import type { Unsubscriber } from 'svelte/store';
 import { router } from 'tinro';
 
 import ContributionActions from '/@/lib/actions/ContributionActions.svelte';
+import { withConfirmation } from '/@/lib/dialogs/messagebox-utils';
 import { context } from '/@/stores/context';
 import { saveImagesInfo } from '/@/stores/save-images-store';
 
@@ -58,7 +59,7 @@ onDestroy(() => {
 
 async function runImage(imageInfo: ImageInfoUI) {
   runImageInfo.set(imageInfo);
-  router.goto('/images/run/basic');
+  router.goto('/image/run/basic');
 }
 
 async function deleteImage(): Promise<void> {
@@ -98,60 +99,59 @@ function saveImage() {
 }
 </script>
 
-<ListItemButtonIcon title="Run Image" onClick="{() => runImage(image)}" detailed="{detailed}" icon="{faPlay}" />
+<ListItemButtonIcon title="Run Image" onClick={() => runImage(image)} detailed={detailed} icon={faPlay} />
 
 <ListItemButtonIcon
   title="Delete Image"
-  confirm="{true}"
-  onClick="{() => deleteImage()}"
-  detailed="{detailed}"
-  icon="{faTrash}"
-  enabled="{image.status === 'UNUSED'}" />
+  onClick={() => withConfirmation(deleteImage, `delete image ${image.name}:${image.tag}`)}
+  detailed={detailed}
+  icon={faTrash}
+  enabled={image.status === 'UNUSED'} />
 
 <!-- If dropdownMenu is true, use it, otherwise just show the regular buttons -->
 <ActionsWrapper
-  dropdownMenu="{dropdownMenu}"
-  onBeforeToggle="{() => {
+  dropdownMenu={dropdownMenu}
+  onBeforeToggle={() => {
     globalContext?.setValue('selectedImageId', image.id);
-  }}">
+  }}>
   <ListItemButtonIcon
     title="Push Image"
-    onClick="{() => pushImage(image)}"
-    menu="{dropdownMenu}"
-    detailed="{detailed}"
-    icon="{faArrowUp}" />
+    onClick={() => pushImage(image)}
+    menu={dropdownMenu}
+    detailed={detailed}
+    icon={faArrowUp} />
 
   <ListItemButtonIcon
     title="Edit Image"
-    onClick="{() => renameImage(image)}"
-    menu="{dropdownMenu}"
-    detailed="{detailed}"
-    icon="{faEdit}" />
+    onClick={() => renameImage(image)}
+    menu={dropdownMenu}
+    detailed={detailed}
+    icon={faEdit} />
 
   {#if !detailed}
     <ListItemButtonIcon
       title="Show History"
-      onClick="{() => showLayersImage()}"
-      menu="{dropdownMenu}"
-      detailed="{detailed}"
-      icon="{faLayerGroup}" />
+      onClick={() => showLayersImage()}
+      menu={dropdownMenu}
+      detailed={detailed}
+      icon={faLayerGroup} />
   {/if}
   <ListItemButtonIcon
     title="Save Image"
     tooltip="Save image to a local directory"
-    onClick="{() => saveImage()}"
-    menu="{dropdownMenu}"
-    detailed="{detailed}"
-    icon="{faDownload}" />
+    onClick={() => saveImage()}
+    menu={dropdownMenu}
+    detailed={detailed}
+    icon={faDownload} />
 
-  <ActionsWrapper dropdownMenu="{groupingContributions}" dropdownMenuAsMenuActionItem="{groupingContributions}">
+  <ActionsWrapper dropdownMenu={groupingContributions} dropdownMenuAsMenuActionItem={groupingContributions}>
     <ContributionActions
-      args="{[image]}"
-      dropdownMenu="{groupingContributions ? true : dropdownMenu}"
-      contributions="{contributions}"
+      args={[image]}
+      dropdownMenu={groupingContributions ? true : dropdownMenu}
+      contributions={contributions}
       contextPrefix="imageItem"
-      detailed="{detailed}"
-      onError="{onError}"
-      contextUI="{globalContext}" />
+      detailed={detailed}
+      onError={onError}
+      contextUI={globalContext} />
   </ActionsWrapper>
 </ActionsWrapper>

@@ -16,9 +16,8 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
-const tailwindColors = require('tailwindcss/colors')
-
-import colorPalette from './tailwind-color-palette.json';
+const tailwindColors = require('tailwindcss/colors');
+const colorPalette = require('./tailwind-color-palette.json');
 
 module.exports = {
   content: [
@@ -29,58 +28,37 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
-      boxShadow: {
-        "titlebar": 'inset 0px -1px 0px 0 rgb(54 54 61 / 0.6)', // highlight for bottom of titlebar
-	"pageheader": 'inset 0 0px 10px 0 rgb(0 0 0 / 0.4)',
-	"nav": 'inset 7px -4px 6px 0 rgb(0 0 0 / 0.15)',
-      },
       transitionProperty: {
         width: 'width',
       },
       width: {
-        'leftnavbar': '48px',
-        'leftsidebar': '225px',
+        leftnavbar: '48px',
+        leftsidebar: '170px',
       },
       minWidth: {
-        'leftnavbar': '48px',
-        'leftsidebar': '225px',
+        leftnavbar: '48px',
+        leftsidebar: '170px',
       },
+    },
+    fontSize: {
+      xs: '10px',
+      sm: '11px',
+      base: '12px',
+      lg: '14px',
+      xl: '16px',
+      '2xl': '18px',
+      '3xl': '20px',
+      '4xl': '24px',
+      '5xl': '30px',
+      '6xl': '36px',
     },
     colors: {
       // import colors from the color palette
       ...colorPalette,
-      // The "status" colours to be used for Podman and Kubernetes containers
-      // these can be referenced by in the form of "bg-status-running" or "text-status-running"
-      'status': {
-        // Podman & Kubernetes
-        'running': tailwindColors.green[400],
 
-        // Kubernetes only
-        'terminated': tailwindColors.red[500],
-        'waiting': tailwindColors.amber[600],
-
-        // Podman only
-        'starting': tailwindColors.green[600],
-
-        // Stopped & Exited are the same color / same thing in the eyes of statuses
-        'stopped': tailwindColors.gray[300],
-        'exited': tailwindColors.gray[300],
-
-        // "Warning"
-        'paused': tailwindColors.amber[600],
-        'degraded': tailwindColors.amber[700],
-
-        // Others
-        'created': tailwindColors.green[300],
-        'dead': tailwindColors.red[500],
-
-        // If we don't know the status, use gray
-        'unknown': tailwindColors.gray[100],
-
-      },
       // The remaining colors below are not part of our palette and are only here
       // to maintain existing code. No new use.
-      'zinc': {
+      zinc: {
         100: tailwindColors.zinc[100],
         200: tailwindColors.zinc[200],
         300: tailwindColors.zinc[300],
@@ -88,8 +66,8 @@ module.exports = {
         600: tailwindColors.zinc[600],
         700: tailwindColors.zinc[700],
       },
-      'violet': {
-         50: tailwindColors.violet[50],
+      violet: {
+        50: tailwindColors.violet[50],
         400: tailwindColors.violet[400],
         500: tailwindColors.violet[500],
         600: tailwindColors.violet[600],

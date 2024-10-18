@@ -57,8 +57,8 @@ You can develop on either: `Windows`, `macOS` or `Linux`.
 
 Requirements:
 
-- [Node.js 18+](https://nodejs.org/en/)
-- [yarn](https://yarnpkg.com/)
+- [Node.js 20+](https://nodejs.org/en/)
+- [pnpm v9.x](https://pnpm.io/installation) (`corepack enable pnpm)
 
 Optional Linux requirements:
 
@@ -93,10 +93,10 @@ git clone https://github.com/<you>/podman-desktop && cd podman-desktop
 
 ### Step 2. Install dependencies
 
-Fetch all dependencies using the command `yarn`:
+Fetch all dependencies using the command `pnpm`:
 
 ```sh
-yarn install
+pnpm install
 ```
 
 ### Step 3. Start in watch mode
@@ -104,7 +104,7 @@ yarn install
 Run the application in watch mode:
 
 ```sh
-yarn watch
+pnpm watch
 ```
 
 The dev environment will track all files changes and reload the application respectively.
@@ -113,22 +113,22 @@ The dev environment will track all files changes and reload the application resp
 
 Write tests! Please try to write some unit tests when submitting your PR.
 
-Run the unit and component tests using `yarn`:
+Run the unit and component tests using `pnpm`:
 
 ```sh
-yarn test:unit
+pnpm test:unit
 ```
 
 Depending on to what part of project you contribute to, you can specify to run tests for the given module only, ie., if you are working on extensions, you can run the tests for extensions and have faster feedback:
 
 ```sh
-yarn test:extensions
+pnpm test:extensions
 ```
 
 or if you are contributing to a particular extension, you can call:
 
 ```sh
-yarn test:extensions:compose
+pnpm test:extensions:compose
 ```
 
 This will show a test results for restricted amount of tests:
@@ -150,15 +150,43 @@ Check the npm script tasks in our `package.json` for more options.
 
 ### Step 5. Run E2E tests
 
-In case of adding new feature, it is always suitable to make sure we do not bring any new regression. For this purpose we are using the E2E tests. They can be run using `yarn`:
+In case of adding new feature, it is always suitable to make sure we do not bring any new regression. For this purpose we are using the E2E tests. They can be built and run using `pnpm` with a variety of options:
+
+- For all the tests:
 
 ```sh
-yarn test:e2e:smoke
+pnpm test:e2e
 ```
 
-Although, there are requirements that need to be fulfilled before running the tests in order to make them pass:
+- For the smoke tests:
 
-- remove `settings.json` from `~/.local/share/containers/podman-desktop/configuration/` or if you do not want to lose your settings, remove the objects from the file with keys `"welcome.version"` and `"telemetry.*"`
+```sh
+pnpm test:e2e:smoke
+```
+
+- For the extension tests:
+
+```sh
+pnpm test:e2e:extension
+```
+
+You can find more specific options on the [package.json](https://github.com/containers/podman-desktop/blob/main/package.json) file, under 'scripts'.
+
+However, there are some things that you have to take into account:
+
+- In order to make the tests pass you have to either:
+  - Remove `settings.json` from `~/.local/share/containers/podman-desktop/configuration/` or,
+  - Remove the objects with keys `"welcome.version"` and `"telemetry.*"` from the file, if you do not want to lose your settings
+- Some of the tests can only be executed in certain operating systems. If your execution is skipping a test, this is very likely the reason why.
+- If you want to execute the tests outside of the repository, you can find a setup guide in this [README](https://github.com/containers/podman-desktop/tree/main/tests/playwright#podman-desktop-playwright-tests).
+
+Finally, after executing the E2E tests, you can check the results in your browser with:
+
+```sh
+pnpm exec playwright show-report tests/playwright/output/html-results
+```
+
+In case of an error, you can find more information that can help you debug in the `podman-desktop/tests/playwright/output` folder. You have the video repetitions on `videos`, captures of the application failing the test on `screenshots`, and the traces of the execution on `traces`. The latter ones can be opened with `npx playwright show-trace <path/to/trace/zip`.
 
 ### Step 6. Code coverage
 
@@ -188,20 +216,20 @@ When contributing the new code, you should consider not lowering overall code co
 
 ### Step 7. Code formatter / linter
 
-We use `prettier` as a formatter and `eslint` for linting.
+We use `@biomejs/biome` as a formatter and `eslint` for linting.
 
 Check that your code is properly formatted with the linter and formatter:
 
 Checking:
 
 ```sh
-yarn lint:check && yarn format:check
+pnpm lint:check && pnpm format:check
 ```
 
 Fix:
 
 ```sh
-yarn lint:fix && yarn format:fix
+pnpm lint:fix && pnpm format:fix
 ```
 
 ### Step 8. Compile production binaries (optional)
@@ -209,12 +237,14 @@ yarn lint:fix && yarn format:fix
 You may want to test the binary against your local system before pushing a PR, you can do so by running the following command:
 
 ```sh
-yarn compile:current
+pnpm compile:current
 ```
 
 This will create a binary according to your local system and output it to the `dist/` folder.
 
 > **_NOTE:_** macOS and Windows create binaries while Linux will create a `.flatpak`. Make sure your flatpak dependencies are installed for successful compiling on Linux.
+
+> **_macOS NOTE:_** On macOS the `dist/` folder will contain folders for `arm64` and `universal` `.app` files. Ignore these and use the `.app` file in the `dist/mac/` folder for testing.
 
 ## Submitting Pull Requests
 
@@ -348,7 +378,7 @@ If you're unsure where to add code (renderer, UI, extensions, plugins) see the b
 - `packages/preload`: Electron code that runs before the page gets rendered. Typically has access to APIs and used to setup communication processes between the main and renderer code.
 - `packages/preload-docker-extension`: Electron preload code specific to the Docker Desktop extension.
 - `packages/renderer`: Electron code that runs in the renderer process. The renderer runs separate to the main process and is responsible for typically rendering the main pages of Podman Desktop. Typically, this is where you find the `.svelte` code that renders the main Podman Desktop UI.
-- `scripts`: Scripts Podman Desktop requires such as `yarn watch` functionality and updating Electron vendorered modules.
+- `scripts`: Scripts Podman Desktop requires such as `pnpm watch` functionality and updating Electron vendorered modules.
 - `tests`: Contains e2e tests for Podman Desktop.
 - `types`: Additional types required for TypeScript.
 - `website`: The documentation as well as [Podman Desktop website](https://podman-desktop.io) developed in [Docusaurus](https://docusaurus.io).
@@ -361,6 +391,31 @@ If you're unsure where to add code (renderer, UI, extensions, plugins) see the b
 Podman Desktop is modularized into extensions for each 'Provider'. You can also create and add your own extension.
 
 See our [extensions documentation](https://podman-desktop.io/docs/extensions) on our website for more information.
+
+### UI colors
+
+Colors in Podman Desktop are now managed by a [`color-registry.ts`](https://github.com/containers/podman-desktop/blob/main/packages/main/src/plugin/color-registry.ts) file in order to easily switch between light and dark mode.
+
+When contributing a UI component to Podman Desktop that is colorized, you must go through some steps to figure out what color to use and how to reference it.
+
+Steps:
+
+1. Open the [`color-registry.ts`](https://github.com/containers/podman-desktop/blob/main/packages/main/src/plugin/color-registry.ts) file.
+2. Figure out which color category from the `initColors()` function.
+3. Use the referenced color with the format `[var(--pd-<color>)]`
+
+Example:
+
+1. Choose what UI component you want to add: Ex. I want to add a new primary button.
+2. Look under `initColors()` and pick `this.initButton()` and scroll down to `protected initButton()`.
+3. Pick a color. I want to use the the "primary" button. So I will pick: `${button}primary-bg`.
+4. Scroll up and note the `const` below `protected initButton()` which is `const button = 'button-';`
+5. The color can be referenced with `[var(--pd-button-primary-bg)]`. The `[var(--pd-` portion will always be consistent when refering to a color variable.
+6. For example:
+
+```ts
+<Button class="bg-[var(--pd-button-primary-bg)]"/>
+```
 
 ## Maintainer tasks
 

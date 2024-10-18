@@ -29,18 +29,20 @@ const config = {
     globals: true,
     environment: 'jsdom',
     globalSetup: './tests/playwright/src/globalSetup/global-setup.ts',
-    setupFiles: './tests/playwright/src/setupFiles/extended-hooks.ts',
     /**
      * By default, vitest search test files in all packages.
      * For e2e tests have sense search only is project root tests folder
      */
-    include: ['**/tests/playwright/src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    include: [
+      '**/tests/playwright/src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
+      './scripts/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
+    ],
     exclude: [
       '**/builtin/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/.{idea,git,cache,output,temp,cdix}/**',
-      '**/{.electron-builder,babel,changelog,docusaurus,jest,postcss,prettier,rollup,svelte,tailwind,vite,vitest*,webpack}.config.*',
+      '**/{.electron-builder,babel,changelog,docusaurus,jest,postcss,rollup,svelte,tailwind,vite,vitest*,webpack}.config.*',
     ],
 
     /**
@@ -49,7 +51,7 @@ const config = {
     testTimeout: 60_000,
     hookTimeout: 120_000,
     // test reporters - default for all and junit for CI
-    reporters: process.env.CI ? ['default', 'junit'] : ['default'],
+    reporters: process.env.CI ? [['default'], ['junit', { includeConsoleOutput: false }]] : ['default'],
     outputFile: process.env.CI ? { junit: 'tests/playwright/output/junit-results.xml' } : {},
   },
   resolve: {

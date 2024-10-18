@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ import '@testing-library/jest-dom/vitest';
 
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+/* eslint-disable import/no-duplicates */
+import { tick } from 'svelte';
 import { get } from 'svelte/store';
+/* eslint-enable import/no-duplicates */
 import { router } from 'tinro';
 import { beforeAll, expect, test, vi } from 'vitest';
 
@@ -44,6 +47,7 @@ const provider: ProviderInfo = {
   containerConnections: [
     {
       name: 'MyConnection',
+      displayName: 'MyConnection',
       status: 'started',
       endpoint: { socketPath: 'dummy' },
       type: 'podman',
@@ -273,6 +277,11 @@ beforeAll(() => {
   (window as any).kubernetesListPods = kubernetesListPodsMock;
   (window as any).kubernetesGetCurrentNamespace = kubernetesGetCurrentNamespaceMock;
   (window as any).onDidUpdateProviderStatus = vi.fn().mockResolvedValue(undefined);
+  (window as any).removePod = vi.fn();
+  vi.mocked(window.removePod);
+  (window as any).getConfigurationValue = vi.fn();
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(false);
+
   (window.events as unknown) = {
     receive: (_channel: string, func: any) => {
       func();
@@ -284,9 +293,8 @@ beforeAll(() => {
 });
 
 async function waitRender(customProperties: object): Promise<void> {
-  const result = render(PodsList, { ...customProperties });
-  // wait that result.component.$$.ctx[2] is set
-  await vi.waitUntil(() => result.component.$$.ctx[2] !== undefined, { timeout: 5000 });
+  render(PodsList, { ...customProperties });
+  await tick();
 }
 
 test('Expect no pods being displayed', async () => {
@@ -443,17 +451,17 @@ test('Expect the pod1 row to have 3 status dots with the correct colors and the 
   expect(statusDots.length).toBe(4);
 
   expect(statusDots[0].title).toBe('container1: Running');
-  expect(statusDots[0]).toHaveClass('bg-status-running');
+  expect(statusDots[0]).toHaveClass('bg-[var(--pd-status-running)]');
 
   expect(statusDots[1].title).toBe('container3: Exited');
-  expect(statusDots[1]).toHaveClass('outline-status-exited');
+  expect(statusDots[1]).toHaveClass('outline-[var(--pd-status-exited)]');
 
   expect(statusDots[2].title).toBe('container2: Terminated');
-  expect(statusDots[2]).toHaveClass('bg-status-terminated');
+  expect(statusDots[2]).toHaveClass('bg-[var(--pd-status-terminated)]');
 
   // 2nd row / 2nd pod
   expect(statusDots[3].title).toBe('container4: Running');
-  expect(statusDots[3]).toHaveClass('bg-status-running');
+  expect(statusDots[3]).toHaveClass('bg-[var(--pd-status-running)]');
 });
 
 test('Expect the manyPod row to show 9 dots representing every status', async () => {
@@ -475,31 +483,31 @@ test('Expect the manyPod row to show 9 dots representing every status', async ()
   expect(statusDots.length).toBe(9);
 
   expect(statusDots[0].title).toBe('Running: 3');
-  expect(statusDots[0]).toHaveClass('bg-status-running');
+  expect(statusDots[0]).toHaveClass('bg-[var(--pd-status-running)]');
 
   expect(statusDots[1].title).toBe('Created: 1');
-  expect(statusDots[1]).toHaveClass('outline-status-created');
+  expect(statusDots[1]).toHaveClass('outline-[var(--pd-status-created)]');
 
   expect(statusDots[2].title).toBe('Paused: 1');
-  expect(statusDots[2]).toHaveClass('bg-status-paused');
+  expect(statusDots[2]).toHaveClass('bg-[var(--pd-status-paused)]');
 
   expect(statusDots[3].title).toBe('Waiting: 1');
-  expect(statusDots[3]).toHaveClass('bg-status-waiting');
+  expect(statusDots[3]).toHaveClass('bg-[var(--pd-status-waiting)]');
 
   expect(statusDots[4].title).toBe('Degraded: 1');
-  expect(statusDots[4]).toHaveClass('bg-status-degraded');
+  expect(statusDots[4]).toHaveClass('bg-[var(--pd-status-degraded)]');
 
   expect(statusDots[5].title).toBe('Exited: 1');
-  expect(statusDots[5]).toHaveClass('outline-status-exited');
+  expect(statusDots[5]).toHaveClass('outline-[var(--pd-status-exited)]');
 
   expect(statusDots[6].title).toBe('Stopped: 1');
-  expect(statusDots[6]).toHaveClass('outline-status-stopped');
+  expect(statusDots[6]).toHaveClass('outline-[var(--pd-status-stopped)]');
 
   expect(statusDots[7].title).toBe('Terminated: 1');
-  expect(statusDots[7]).toHaveClass('bg-status-terminated');
+  expect(statusDots[7]).toHaveClass('bg-[var(--pd-status-terminated)]');
 
   expect(statusDots[8].title).toBe('Dead: 1');
-  expect(statusDots[8]).toHaveClass('bg-status-dead');
+  expect(statusDots[8]).toHaveClass('bg-[var(--pd-status-dead)]');
 });
 
 const runningPod: PodInfo = {
@@ -622,4 +630,34 @@ test('Expect tab filtering to not duplicate filter condition in the search bar',
 
   const searchInput = screen.getByPlaceholderText('Search pods...') as HTMLInputElement;
   expect(searchInput.value).toBe('is:running');
+});
+
+test('Expect user confirmation to pop up when preferences require', async () => {
+  getProvidersInfoMock.mockResolvedValue([provider]);
+  listPodsMock.mockResolvedValue([pod1]);
+  kubernetesListPodsMock.mockResolvedValue([]);
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+
+  await vi.waitUntil(() => get(providerInfos).length === 1 && get(podsInfos).length === 1, { timeout: 5000 });
+
+  render(PodsList);
+
+  const checkboxes = screen.getAllByRole('checkbox', { name: 'Toggle pod' });
+  await fireEvent.click(checkboxes[0]);
+
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(true);
+
+  (window as any).showMessageBox = vi.fn();
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 1 });
+
+  const deleteButton = screen.getByRole('button', { name: 'Delete 1 selected items' });
+  await fireEvent.click(deleteButton);
+
+  expect(window.showMessageBox).toHaveBeenCalledOnce();
+
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 0 });
+  await fireEvent.click(deleteButton);
+  expect(window.showMessageBox).toHaveBeenCalledTimes(2);
+  vi.waitFor(() => expect(window.removePod).toHaveBeenCalled());
 });

@@ -18,7 +18,7 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { expect, test, vi } from 'vitest';
 
 import CloseButton from './CloseButton.svelte';
@@ -38,15 +38,15 @@ test('Check button styling', async () => {
   expect(button).toHaveClass('no-underline');
   expect(button).toHaveClass('cursor-pointer');
 
-  expect(button.firstChild).toBeInTheDocument();
-  expect(button.firstChild).toHaveClass('svelte-fa');
+  const img = within(button).getByRole('img', { hidden: true });
+  expect(img).toBeInTheDocument();
+  expect(img).toHaveClass('svelte-fa');
 });
 
 test('Check on:click action', async () => {
-  const comp = render(CloseButton);
-
   const clickMock = vi.fn();
-  comp.component.$on('click', clickMock);
+  const comp = render(CloseButton);
+  comp.container.onclick = clickMock;
 
   // check on:click
   const button = screen.getByRole('button');

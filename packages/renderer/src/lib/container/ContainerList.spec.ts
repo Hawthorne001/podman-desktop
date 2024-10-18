@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ import '@testing-library/jest-dom/vitest';
 
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+/* eslint-disable import/no-duplicates */
+import { tick } from 'svelte';
 import { get } from 'svelte/store';
+/* eslint-enable import/no-duplicates */
 import { beforeAll, expect, test, vi } from 'vitest';
 
 import { containersInfos } from '../../stores/containers';
@@ -57,6 +60,8 @@ beforeAll(() => {
   (window as any).removePod = removePodMock;
   (window as any).deleteContainer = deleteContainerMock;
   (window as any).getContributedMenus = getContributedMenusMock;
+  (window as any).getConfigurationValue = vi.fn();
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(false);
 
   (window.events as unknown) = {
     receive: (_channel: string, func: any) => {
@@ -66,11 +71,8 @@ beforeAll(() => {
 });
 
 async function waitRender(customProperties: object): Promise<void> {
-  const result = render(ContainerList, { ...customProperties });
-  // wait that result.component.$$.ctx[2] is set
-  while (result.component.$$.ctx[2] === undefined) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  render(ContainerList, { ...customProperties });
+  await tick();
 }
 
 test('Expect no container engines being displayed', async () => {
@@ -361,9 +363,9 @@ test('Try to delete a container without deleting pods', async () => {
   await waitRender({});
 
   // select the standalone container checkbox
-  const containerCheckbox = screen.getAllByRole('checkbox', { name: 'Toggle container' });
-  expect(containerCheckbox[0]).toBeInTheDocument();
-  await fireEvent.click(containerCheckbox[0]);
+  const checkboxes = screen.getAllByRole('checkbox', { name: 'Toggle container' });
+  expect(checkboxes[0]).toBeInTheDocument();
+  await fireEvent.click(checkboxes[0]);
 
   // click on the delete button
   const deleteButton = screen.getByRole('button', { name: 'Delete selected containers and pods' });
@@ -444,9 +446,9 @@ test('Try to delete a pod without deleting container', async () => {
   await waitRender({});
 
   // select the pod checkbox
-  const podCheckbox = screen.getByRole('checkbox', { name: 'Toggle pod' });
-  expect(podCheckbox).toBeInTheDocument();
-  await fireEvent.click(podCheckbox);
+  const checkboxes = screen.getAllByRole('checkbox', { name: 'Toggle container' });
+  expect(checkboxes[1]).toBeInTheDocument();
+  await fireEvent.click(checkboxes[1]);
 
   // click on the delete button
   const deleteButton = screen.getByRole('button', { name: 'Delete selected containers and pods' });
@@ -578,6 +580,19 @@ test('Expect clear filter in empty screen to clear serach term, except is:...', 
 });
 
 test('Expect to display running / stopped containers depending on tab', async () => {
+  removePodMock.mockClear();
+  deleteContainerMock.mockClear();
+  listContainersMock.mockResolvedValue([]);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('tray:update-provider'));
+
+  // wait for the store to be cleared
+  while (get(containersInfos).length !== 0) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
   getProviderInfosMock.mockResolvedValue([
     {
       name: 'podman',
@@ -596,16 +611,13 @@ test('Expect to display running / stopped containers depending on tab', async ()
   const pod2Id = 'pod2-id';
   const pod3Id = 'pod3-id';
 
-  const firstId = 'sha256:68347658374683476';
-
-  // one single container and two containers part of a pod
+  // 3 pods with 2 containers each
   const mockedContainers = [
     // 2 / 2 containers are running on this pod
     {
-      Id: firstId,
+      Id: 'sha256:68347658374683476',
       Image: 'sha256:234',
       Names: ['container1-pod1'],
-      RepoTags: ['veryold:image'],
       State: 'Running',
       pod: {
         name: 'pod1',
@@ -636,7 +648,6 @@ test('Expect to display running / stopped containers depending on tab', async ()
       Id: 'sha256:876532948235',
       Image: 'sha256:876',
       Names: ['container1-pod2'],
-      RepoTags: ['veryold:image'],
       State: 'Running',
       pod: {
         name: 'pod2',
@@ -667,7 +678,6 @@ test('Expect to display running / stopped containers depending on tab', async ()
       Id: 'sha256:56283769268',
       Image: 'sha256:562',
       Names: ['container1-pod3'],
-      RepoTags: ['veryold:image'],
       State: 'Stopped',
       pod: {
         name: 'pod3',
@@ -700,8 +710,8 @@ test('Expect to display running / stopped containers depending on tab', async ()
   window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
   window.dispatchEvent(new CustomEvent('tray:update-provider'));
 
-  // wait store are populated
-  while (get(containersInfos).length === 0 || get(containersInfos)[0].Id !== firstId) {
+  // wait until store is populated
+  while (get(containersInfos).length === 0) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
@@ -756,12 +766,137 @@ test('Expect to display running / stopped containers depending on tab', async ()
       await fireEvent.click(tab);
     }
     for (const presentCell of tt.presentCells) {
-      const cell = screen.getByRole('cell', { name: presentCell });
+      const cell = screen.getByRole('button', { name: presentCell });
       expect(cell).toBeInTheDocument();
     }
     for (const absentCell of tt.absentLabels) {
-      const cell = screen.queryByRole('cell', { name: absentCell });
+      const cell = screen.queryByText(absentCell);
       expect(cell).not.toBeInTheDocument();
     }
   }
+});
+
+test('Sort containers based on selected parameter', async () => {
+  listContainersMock.mockResolvedValue([]);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('tray:update-provider'));
+
+  // wait for the store to be cleared
+  while (get(containersInfos).length !== 0) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  const mockedContainers = [
+    {
+      Id: 'sha256:123454321',
+      Image: 'sha256:123',
+      Names: ['foo1'],
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+      engineType: 'podman',
+      ImageID: 'dummy-image-id',
+      startedAt: '2024-06-19T17:30:46.000Z',
+    },
+    {
+      Id: 'sha256:223454321',
+      Image: 'sha256:223',
+      Names: ['foo2'],
+      Status: 'Exited',
+      engineId: 'docker',
+      engineName: 'docker',
+      engineType: 'docker',
+      ImageID: 'dummy-image-id',
+      startedAt: '2024-06-19T17:39:46.000Z',
+    },
+  ];
+
+  listContainersMock.mockResolvedValue(mockedContainers);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('tray:update-provider'));
+
+  // wait until the store is populated
+  while (get(containersInfos).length === 0) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  await waitRender({});
+
+  const status = screen.getByRole('columnheader', { name: 'Status' });
+  await fireEvent.click(status);
+
+  const container1 = screen.getByRole('cell', { name: 'foo1' });
+  const container2 = screen.getByRole('cell', { name: 'foo2' });
+
+  expect(container1).toBeInTheDocument();
+  expect(container2).toBeInTheDocument();
+
+  expect(container2.compareDocumentPosition(container1)).toBe(2);
+
+  const environment = screen.getByRole('columnheader', { name: 'Environment' });
+  await fireEvent.click(environment);
+
+  expect(container1.compareDocumentPosition(container2)).toBe(2);
+
+  const image = screen.getByRole('columnheader', { name: 'Image' });
+  await fireEvent.click(image);
+
+  expect(container2.compareDocumentPosition(container1)).toBe(2);
+});
+
+test('Expect user confirmation to pop up when preferences require', async () => {
+  listContainersMock.mockResolvedValue([]);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('tray:update-provider'));
+
+  // wait for the store to be cleared
+  await vi.waitFor(() => get(containersInfos).length === 0);
+
+  // one single container and a container as part of a pod
+  const mockedContainers = [
+    {
+      Id: 'sha256:123454321',
+      Image: 'sha256:123',
+      Names: ['foo1'],
+      Status: 'Running',
+      engineId: 'podman',
+      engineName: 'podman',
+      ImageID: 'dummy-image-id',
+    },
+  ];
+
+  listContainersMock.mockResolvedValue(mockedContainers);
+
+  window.dispatchEvent(new CustomEvent('extensions-already-started'));
+  window.dispatchEvent(new CustomEvent('provider-lifecycle-change'));
+  window.dispatchEvent(new CustomEvent('tray:update-provider'));
+
+  // wait until the store is populated
+  await vi.waitFor(() => get(containersInfos).length > 0);
+
+  await waitRender({});
+
+  // select the standalone container checkbox
+  const checkboxes = screen.getAllByRole('checkbox', { name: 'Toggle container' });
+  await fireEvent.click(checkboxes[0]);
+
+  vi.mocked(window.getConfigurationValue).mockResolvedValue(true);
+  (window as any).showMessageBox = vi.fn();
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 1 });
+
+  const deleteButton = screen.getByRole('button', { name: 'Delete selected containers and pods' });
+  await fireEvent.click(deleteButton);
+
+  expect(window.showMessageBox).toHaveBeenCalledOnce();
+
+  vi.mocked(window.showMessageBox).mockResolvedValue({ response: 0 });
+  await fireEvent.click(deleteButton);
+  expect(window.showMessageBox).toHaveBeenCalledTimes(2);
+  vi.waitFor(() => expect(deleteContainerMock).toHaveBeenCalled());
 });

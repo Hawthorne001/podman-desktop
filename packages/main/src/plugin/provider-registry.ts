@@ -556,29 +556,35 @@ export class ProviderRegistry {
 
   // start anything from the provider
   async startProvider(providerInternalId: string): Promise<void> {
-    const provider = this.getMatchingProvider(providerInternalId);
-
     // do we have a lifecycle attached to the provider ?
     if (this.providerLifecycles.has(providerInternalId)) {
       return this.startProviderLifecycle(providerInternalId);
     }
 
+    const provider = this.getMatchingProvider(providerInternalId);
+    let connection: ContainerProviderConnection | KubernetesProviderConnection | undefined;
+
     if (provider.containerConnections && provider.containerConnections.length > 0) {
-      const connection = provider.containerConnections[0];
-      const lifecycle = connection.lifecycle;
-      if (!lifecycle?.start) {
-        throw new Error('The container connection does not support start lifecycle');
-      }
-
-      const context = this.connectionLifecycleContexts.get(connection);
-      if (!context) {
-        throw new Error('The connection does not have context to start');
-      }
-
-      return lifecycle.start(context);
-    } else {
-      throw new Error('No container connection found for provider');
+      connection = provider.containerConnections[0];
+    } else if (provider.kubernetesConnections && provider.kubernetesConnections.length > 0) {
+      connection = provider.kubernetesConnections[0];
     }
+
+    if (!connection) {
+      throw new Error('The provider does not have any connection to start');
+    }
+
+    const lifecycle = connection.lifecycle;
+    if (!lifecycle?.start) {
+      throw new Error(`The connection ${connection.name} does not support start lifecycle`);
+    }
+
+    const context = this.connectionLifecycleContexts.get(connection);
+    if (!context) {
+      throw new Error(`The connection ${connection.name} does not have context to start`);
+    }
+
+    return lifecycle.start(context);
   }
 
   // Initialize the provider (if there is something to initialize)
@@ -634,11 +640,18 @@ export class ProviderRegistry {
     if (this.isContainerConnection(connection)) {
       providerConnection = {
         name: connection.name,
+        displayName: connection.displayName ?? connection.name,
         status: connection.status(),
         type: connection.type,
         endpoint: {
           socketPath: connection.endpoint.socketPath,
         },
+        vmType: connection.vmType
+          ? {
+              id: connection.vmType,
+              name: connection.vmTypeDisplayName ?? connection.vmType,
+            }
+          : undefined,
       };
     } else {
       providerConnection = {
@@ -873,9 +886,10 @@ export class ProviderRegistry {
   ): Promise<AuditResult> {
     // grab the correct provider
     const provider = this.getMatchingProvider(internalProviderId);
+    const emptyAuditResult: AuditResult = { records: [] };
 
     if (!provider.connectionAuditor) {
-      throw new Error('The provider does not support audit for connection parameters');
+      return emptyAuditResult;
     }
 
     return provider.connectionAuditor.auditItems(params);
@@ -992,6 +1006,7 @@ export class ProviderRegistry {
         const event = {
           providerId: provider.id,
           connection: {
+            displayName: providerConnectionInfo.displayName,
             name: providerConnectionInfo.name,
             type: providerConnectionInfo.type,
             endpoint: providerConnectionInfo.endpoint,
@@ -1082,6 +1097,7 @@ export class ProviderRegistry {
         const event = {
           providerId: provider.id,
           connection: {
+            displayName: providerConnectionInfo.displayName,
             name: providerConnectionInfo.name,
             type: providerConnectionInfo.type,
             endpoint: providerConnectionInfo.endpoint,

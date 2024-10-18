@@ -17,9 +17,11 @@
  ***********************************************************************/
 
 import type { Locator, Page } from '@playwright/test';
-import { expect as playExpect } from '@playwright/test';
+import test, { expect as playExpect } from '@playwright/test';
 
+import { handleConfirmationDialog } from '../../utility/operations';
 import { waitUntil, waitWhile } from '../../utility/wait';
+import { VolumeState } from '../core/states';
 import { CreateVolumePage } from './create-volume-page';
 import { MainPage } from './main-page';
 import { VolumeDetailsPage } from './volume-details-page';
@@ -33,64 +35,95 @@ export class VolumesPage extends MainPage {
     super(page, 'volumes');
     this.createVolumeButton = this.additionalActions.getByRole('button', { name: 'Create' });
     this.pruneVolumesButton = this.additionalActions.getByRole('button', { name: 'Prune' });
-    this.collectUsageDataButton = this.additionalActions.getByRole('button', { name: 'Collect usage data' });
+    this.collectUsageDataButton = this.additionalActions.getByRole('button', { name: 'Gather volume sizes' });
   }
 
   async openCreateVolumePage(volumeName: string): Promise<CreateVolumePage> {
-    const row = await this.getVolumeRowByName(volumeName);
-    if (row !== undefined) {
-      throw Error('Volume is already created');
-    }
+    return test.step('Open Create Volume Page', async () => {
+      const row = await this.getVolumeRowByName(volumeName);
+      if (row !== undefined) {
+        throw Error('Volume is already created');
+      }
 
-    await playExpect(this.createVolumeButton).toBeEnabled();
-    await this.createVolumeButton.click();
-    return new CreateVolumePage(this.page);
+      await playExpect(this.createVolumeButton).toBeEnabled();
+      await this.createVolumeButton.click();
+      return new CreateVolumePage(this.page);
+    });
   }
 
   async openVolumeDetails(volumeName: string): Promise<VolumeDetailsPage> {
-    const volumeRow = await this.getVolumeRowByName(volumeName);
-    if (volumeRow === undefined) {
-      throw Error(`Volume: ${volumeName} does not exist`);
-    }
-    const containerRowName = volumeRow.getByRole('cell').nth(3);
-    await containerRowName.click();
+    return test.step('Open Volume Details Page', async () => {
+      const volumeRow = await this.getVolumeRowByName(volumeName);
+      if (volumeRow === undefined) {
+        throw Error(`Volume: ${volumeName} does not exist`);
+      }
+      const containerRowName = volumeRow.getByRole('cell').nth(3);
+      await containerRowName.click();
 
-    return new VolumeDetailsPage(this.page, volumeName);
+      return new VolumeDetailsPage(this.page, volumeName);
+    });
+  }
+
+  async deleteVolume(volumeName: string): Promise<VolumesPage> {
+    return test.step('Delete Volume', async () => {
+      const volumeRow = await this.getVolumeRowByName(volumeName);
+      if (volumeRow === undefined) {
+        throw Error(`Volume: ${volumeName} does not exist`);
+      }
+      const containerRowDeleteButton = volumeRow.getByRole('button', { name: 'Delete Volume' });
+      await playExpect(containerRowDeleteButton).toBeEnabled();
+      await containerRowDeleteButton.click();
+      await handleConfirmationDialog(this.page);
+
+      return this;
+    });
   }
 
   async getVolumeRowByName(name: string): Promise<Locator | undefined> {
-    if (await this.pageIsEmpty()) {
-      return undefined;
-    }
-
-    try {
-      const table = await this.getTable();
-      const rows = await table.getByRole('row').all();
-
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const thirdCell = await rows[i].getByRole('cell').nth(3).getByText(name, { exact: true }).count();
-        if (thirdCell) {
-          return rows[i];
-        }
-      }
-    } catch (err) {
-      console.log(`Exception caught on volumes page with message: ${err}`);
-    }
-    return undefined;
+    return this.getRowFromTableByName(name);
   }
 
   protected async volumeExists(name: string): Promise<boolean> {
-    const result = await this.getVolumeRowByName(name);
-    return result !== undefined;
+    return test.step(`Check if volume ${name} exists`, async () => {
+      const result = await this.getVolumeRowByName(name);
+      return result !== undefined;
+    });
   }
 
-  async waitForVolumeExists(name: string): Promise<boolean> {
-    await waitUntil(async () => await this.volumeExists(name), 3000, 900);
-    return true;
+  async countVolumesFromTable(): Promise<number> {
+    return this.countRowsFromTable();
   }
 
-  async waitForVolumeDelete(name: string): Promise<boolean> {
-    await waitWhile(async () => await this.volumeExists(name), 3000, 900);
-    return true;
+  async countUsedVolumesFromTable(): Promise<number> {
+    return (await this.getRowsFromTableByStatus(VolumeState.Used)).length;
+  }
+
+  async waitForVolumeExists(name: string, timeout = 30_000): Promise<boolean> {
+    return test.step(`Wait for volume ${name} to exist`, async () => {
+      if (!name) {
+        throw Error('Volume name is not provided');
+      }
+      await waitUntil(async () => await this.volumeExists(name), { timeout });
+      return true;
+    });
+  }
+
+  async waitForVolumeDelete(name: string, timeout = 30_000): Promise<boolean> {
+    return test.step(`Wait for volume ${name} to be deleted`, async () => {
+      if (!name) {
+        throw Error('Volume name is not provided');
+      }
+      await waitWhile(async () => await this.volumeExists(name), { timeout });
+      return true;
+    });
+  }
+
+  async pruneVolumes(): Promise<VolumesPage> {
+    return test.step('Prune Volumes', async () => {
+      await playExpect(this.pruneVolumesButton).toBeEnabled();
+      await this.pruneVolumesButton.click();
+      await handleConfirmationDialog(this.page, 'Prune');
+      return this;
+    });
   }
 }

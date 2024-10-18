@@ -24,8 +24,7 @@ import { render, screen } from '@testing-library/svelte';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import KubernetesCurrentContextConnectionBadge from '/@/lib/ui/KubernetesCurrentContextConnectionBadge.svelte';
-
-import type { ContextGeneralState } from '../../../../main/src/plugin/kubernetes-context-state';
+import type { ContextGeneralState } from '/@api/kubernetes-contexts-states';
 
 const mocks = vi.hoisted(() => ({
   subscribeMock: vi.fn(),
@@ -90,7 +89,7 @@ test('expect badges to be green when reachable', async () => {
 
   expect(mocks.getCurrentKubeContextState).toHaveBeenCalled();
   const status = screen.getByRole('status');
-  expect(status.firstChild).toHaveClass('bg-green-600');
+  expect(status.firstChild).toHaveClass('bg-[var(--pd-status-connected)]');
 });
 
 test('expect badges to be gray when not reachable', async () => {
@@ -106,7 +105,7 @@ test('expect badges to be gray when not reachable', async () => {
 
   expect(mocks.getCurrentKubeContextState).toHaveBeenCalled();
   const status = screen.getByRole('status');
-  expect(status.firstChild).toHaveClass('bg-gray-900');
+  expect(status.firstChild).toHaveClass('bg-[var(--pd-status-disconnected)]');
 });
 
 test('expect no tooltip when no error', async () => {

@@ -16,7 +16,39 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import type { PlayYamlRuntime } from './operations';
+
 export interface ContainerInteractiveParams {
   interactive?: boolean;
   attachTerminal?: boolean;
+}
+
+export interface KindClusterOptions {
+  providerType?: string;
+  httpPort?: string;
+  httpsPort?: string;
+  useIngressController?: boolean;
+  containerImage?: string;
+}
+
+export interface DeployPodOptions {
+  useKubernetesServices?: boolean;
+  useRestrictedSecurityContext?: boolean;
+  useKubernetesIngress?: boolean;
+  containerExposedPort?: string;
+}
+
+export interface PlayKubernetesOptions {
+  runtime?: PlayYamlRuntime;
+  kubernetesNamespace?: string;
+  kubernetesContext: string;
+}
+
+export enum KubernetesResources {
+  Nodes = 'Nodes',
+  Deployments = 'Deployments',
+  Services = 'Services',
+  IngeressesRoutes = 'Ingresses & Routes',
+  PVCs = 'Persistent Volume Claims',
+  ConfigMapsSecrets = 'ConfigMaps & Secrets',
 }
